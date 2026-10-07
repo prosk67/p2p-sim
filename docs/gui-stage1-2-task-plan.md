@@ -35,7 +35,7 @@ This checklist turns the review of [`gui-stage1-2-plan.md`](../gui-stage1-2-plan
 
 Status (2026-10-04): Live and Report screens done (milestone M1.3). The mock is a time-driven simulation in `web/src/api/mock/mockRuns.ts`; results depend only on the seed, so a resubmitted batch reproduces the original statistics. All eight scenarios were driven end to end in headless Chromium at 1280px and 375px, in light and dark themes. History and a formal keyboard/accessibility pass remain (M1.4).
 
-Docker: `web/Dockerfile` builds the bundle and serves it from unprivileged nginx with the same hardening as the nodes; `docker-compose.web.yml` runs it on `127.0.0.1:8090`. It uses the mock API until the gateway exists. This is separate from the Phase 4 gateway Compose work below, and the node-only `docker-compose.yml` is unchanged.
+Docker: the GUI is built into the gateway image (`gateway/Dockerfile`) and served by the gateway; an earlier nginx mock-preview image was removed.
 
 ## Phase 2: Native Go Gateway
 

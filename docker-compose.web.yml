@@ -7,10 +7,6 @@
 # The gateway reads the same peers file as the nodes, so it reaches them by
 # their Compose service names. With docker-compose.node4.yml, also set
 # GATEWAY_PEERS=peers.4.yaml so the GUI sees node-4.
-#
-# A mock-only preview of the GUI (no nodes needed) is available under the
-# "mock" profile:
-#   docker compose -f docker-compose.web.yml --profile mock up --build web      # http://localhost:8091
 services:
   gateway:
     build:
@@ -39,25 +35,6 @@ services:
     ports:
       - "${GUI_BIND:-127.0.0.1}:${GUI_PORT:-8090}:8080"
 
-  web:
-    profiles: ["mock"]
-    build:
-      context: ./web
-      args:
-        VITE_USE_MOCK: "${WEB_USE_MOCK:-true}"
-    image: p2p-sim-web:latest
-    container_name: p2p-sim-web
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp:size=16m,uid=101,gid=101
-    pids_limit: 64
-    mem_limit: 128m
-    ports:
-      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8091}:8080"
 
 volumes:
   gateway-data:

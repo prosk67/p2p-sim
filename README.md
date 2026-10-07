@@ -100,7 +100,7 @@ cp -r web/dist/. gateway/webui/dist/
 GATEWAY_LISTEN=127.0.0.1:18080 PEERS_CONFIG=my-peers.yaml GATEWAY_DB=gateway/data/gateway.db gateway/gateway
 ```
 
-**GUI development:** `cd web && npm run dev` runs the GUI against a built-in mock API, with a scenario picker on the Cluster screen (worker failure, coordinator loss, busy node, serial mismatch and more). `GATEWAY_URL=http://127.0.0.1:8090 npm run dev:gateway` points it at a real gateway instead. A mock-only container is also available: `docker compose -f docker-compose.web.yml --profile mock up --build web` (port 8091).
+**GUI development:** `cd web && npm run dev` runs the GUI against a built-in mock API, with a scenario picker on the Cluster screen (worker failure, coordinator loss, busy node, serial mismatch and more). `GATEWAY_URL=http://127.0.0.1:8090 npm run dev:gateway` points it at a real gateway instead.
 
 ## Running without Docker
 
