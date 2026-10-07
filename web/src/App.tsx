@@ -1,8 +1,13 @@
-import { Activity, ArrowLeft, CircleHelp, CircleX, Clock3, Network, RefreshCw } from "lucide-react";
+import { Activity, CircleHelp, CircleX, Clock3, Network, RadioTower, RefreshCw, Share2 } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { createApiClient } from "./api/client";
 import { MOCK_SCENARIOS, type ClusterSnapshot, type GatewayConfig, type MockScenario, type RunCreated } from "./api/types";
+import { parseHash } from "./lib/format";
 import { LaunchPage } from "./pages/LaunchPage";
+import { LivePage } from "./pages/LivePage";
+import { NetworkPage } from "./pages/NetworkPage";
+import { ReportPage } from "./pages/ReportPage";
+import { TrafficPage } from "./pages/TrafficPage";
 
 const subscribeToHash = (callback: () => void) => {
   window.addEventListener("hashchange", callback);
@@ -145,7 +150,6 @@ function App() {
   const hash = useSyncExternalStore(subscribeToHash, getCurrentHash, () => "#/cluster");
   const mockEnabled = import.meta.env.VITE_USE_MOCK !== "false";
   const [scenario, setScenario] = useState<MockScenario>("happy-path");
-  const [submittedRun, setSubmittedRun] = useState<RunCreated | null>(null);
 
   useEffect(() => {
     const changeScenario = (event: Event) => {
@@ -156,10 +160,9 @@ function App() {
     return () => window.removeEventListener("mock-scenario", changeScenario);
   }, []);
 
-  const activeRoute = hash.replace(/^#\/?/, "").split("/")[0] || "cluster";
+  const { route: activeRoute, id: routeId, query } = parseHash(hash);
 
   const handleRunStarted = (run: RunCreated) => {
-    setSubmittedRun(run);
     window.location.hash = `#/live/${encodeURIComponent(run.run_id)}`;
   };
 
@@ -170,6 +173,8 @@ function App() {
         <div className="sidebar-caption">SIMULATION CONTROL</div>
         <nav className="primary-nav" aria-label="Primary navigation">
           <a className={activeRoute === "cluster" ? "active" : ""} href="#/cluster"><Network size={17} /><span>Cluster</span></a>
+          <a className={activeRoute === "network" ? "active" : ""} href="#/network"><Share2 size={17} /><span>Network lab</span></a>
+          <a className={activeRoute === "traffic" ? "active" : ""} href="#/traffic"><RadioTower size={17} /><span>Live traffic</span></a>
           <a className={activeRoute === "launch" ? "active" : ""} href="#/launch"><Activity size={17} /><span>Launch run</span></a>
           <a className="nav-muted" href="#/history" aria-disabled="true" onClick={(event) => event.preventDefault()}><Clock3 size={17} /><span>History</span><small>SOON</small></a>
         </nav>
@@ -177,7 +182,13 @@ function App() {
       </aside>
       <main className="main-area">
         <header className="topbar"><span>Distributed queueing simulator</span><span className="topbar-right">{mockEnabled ? "LOCAL PREVIEW" : "GATEWAY"}</span></header>
-        {activeRoute === "cluster" ? <ClusterPage scenario={scenario} mockEnabled={mockEnabled} /> : activeRoute === "launch" ? <LaunchPage scenario={scenario} onStarted={handleRunStarted} /> : activeRoute === "live" && submittedRun ? <section className="page-content"><div className="accepted-panel"><span className="accepted-mark"><Activity size={20} /></span><p className="eyebrow">RUN ACCEPTED</p><h1>Batch started</h1><p className="lede">The coordinator has accepted this simulation. Live progress is the next interface slice.</p><dl><div><dt>Coordinator</dt><dd>{submittedRun.coordinator}</dd></div><div><dt>Batch ID</dt><dd>{submittedRun.batch_id}</dd></div><div><dt>Base seed</dt><dd>{submittedRun.base_seed}</dd></div><div><dt>Replications</dt><dd>{submittedRun.replications}</dd></div></dl><a className="back-link" href="#/launch"><ArrowLeft size={15} />Back to launch</a></div></section> : <div className="empty-state"><CircleHelp size={22} /><strong>Run details unavailable</strong><a href="#/cluster">Return to Cluster</a></div>}
+        {activeRoute === "cluster" ? <ClusterPage scenario={scenario} mockEnabled={mockEnabled} />
+          : activeRoute === "launch" ? <LaunchPage key={query.get("resubmit") ?? "new"} scenario={scenario} onStarted={handleRunStarted} resubmitRunId={query.get("resubmit")} />
+          : activeRoute === "network" ? <NetworkPage scenario={scenario} mockEnabled={mockEnabled} />
+          : activeRoute === "traffic" ? <TrafficPage scenario={scenario} mockEnabled={mockEnabled} />
+          : activeRoute === "live" && routeId ? <LivePage runId={routeId} scenario={scenario} mockEnabled={mockEnabled} />
+          : activeRoute === "report" && routeId ? <ReportPage runId={routeId} scenario={scenario} />
+          : <section className="page-content"><div className="empty-state"><CircleHelp size={22} /><strong>Page not found</strong><a href="#/cluster">Return to Cluster</a></div></section>}
       </main>
     </div>
   );
