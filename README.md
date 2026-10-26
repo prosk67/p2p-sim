@@ -242,7 +242,8 @@ set of nodes. These defaults limit exposure:
 - **Coordinator loss:** batch state lives only in the coordinating node's memory.
   If that node dies, resubmit elsewhere; there is no automatic failover (that
   would need leader election; see the PRD stretch goals).
-- **Batches per node:** one batch at a time per coordinating node. Several nodes
+- **Batches per node:** one batch at a time per coordinating node, M/M/1 and
+  network batches combined. Several nodes
   can coordinate at once, but then their timing figures affect each other.
 - **Tasks per node:** each node's own batch runs one local task at a time. A
   multi-core machine should run several node processes.

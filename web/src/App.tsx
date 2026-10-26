@@ -1,8 +1,9 @@
 import { Activity, CircleHelp, CircleX, Clock3, Network, RadioTower, RefreshCw, Share2 } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createApiClient } from "./api/client";
 import { MOCK_SCENARIOS, type ClusterSnapshot, type GatewayConfig, type MockScenario, type RunCreated } from "./api/types";
 import { parseHash } from "./lib/format";
+import { startPolling } from "./lib/poll";
 import { LaunchPage } from "./pages/LaunchPage";
 import { LivePage } from "./pages/LivePage";
 import { NetworkPage } from "./pages/NetworkPage";
@@ -28,7 +29,7 @@ function ClusterPage({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
-  const client = createApiClient(scenario);
+  const client = useMemo(() => createApiClient(scenario), [scenario]);
 
   useEffect(() => {
     let active = true;
@@ -48,13 +49,12 @@ function ClusterPage({
         if (active) setLoading(false);
       }
     };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 3000);
+    const stop = startPolling(refresh, 3000);
     return () => {
       active = false;
-      window.clearInterval(timer);
+      stop();
     };
-  }, [scenario, refreshKey]);
+  }, [client, refreshKey]);
 
   const nodes = snapshot?.nodes ?? [];
   const disagreement = nodes.some((observer) =>

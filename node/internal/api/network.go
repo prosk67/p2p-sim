@@ -53,7 +53,12 @@ func NetworkHandler(m *netbatch.Manager, netsim NetworkSim, slots SlotAcquirer, 
 		case errors.As(err, &ve):
 			writeJSON(w, http.StatusBadRequest, errorBody{Error: ve.Msg})
 		case errors.Is(err, netbatch.ErrBusy):
-			writeJSON(w, http.StatusConflict, errorBody{Error: err.Error(), BatchID: b.ID})
+			// b is nil when an M/M/1 batch holds the slot; its id is in the message.
+			body := errorBody{Error: err.Error()}
+			if b != nil {
+				body.BatchID = b.ID
+			}
+			writeJSON(w, http.StatusConflict, body)
 		case err != nil:
 			logger.Error("failed to start network batch", "error", err)
 			writeJSON(w, http.StatusInternalServerError, errorBody{Error: err.Error()})

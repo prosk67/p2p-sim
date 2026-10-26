@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────
 # Generic Agentic Dev Layout
-# Usage: ./dev-agent.sh [project-dir]
+# Usage: ./dev.sh [project-dir]
 # ─────────────────────────────────────────────
 
 DIR="${1:-$(pwd)}"
@@ -39,5 +39,3 @@ tmux select-pane -t "$SESSION:git.1"
 # ── Start at window 1 ────────────────────────
 tmux select-window -t "$SESSION:agent"
 tmux attach -t "$SESSION"
-
-mux attach -t "$SESSION"

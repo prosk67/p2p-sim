@@ -24,12 +24,10 @@ fi
 until [[ "$(curl -fsS "$NODE/status" | field complete)" -ge $((REPS / 5)) ]]; do sleep 0.5; done
 echo "stopping $VICTIM (coordinator: $coordinator) at: $(curl -fsS "$NODE/status" | tr -d '\n ')"
 docker stop -t 0 "$VICTIM" >/dev/null
+trap 'docker start "$VICTIM" >/dev/null && echo "restarted $VICTIM"' EXIT
 
 until curl -fsS "$NODE/status" | grep -q '"state": "complete"'; do sleep 1; done
 report="$(curl -fsS "$NODE/report")"
-
-docker start "$VICTIM" >/dev/null
-echo "restarted $VICTIM"
 
 complete="$(echo "$report" | sed -n '/"tasks"/,/}/p' | field complete)"
 failed="$(echo "$report" | sed -n '/"tasks"/,/}/p' | field failed)"

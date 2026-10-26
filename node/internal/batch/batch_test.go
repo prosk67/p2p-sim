@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +41,11 @@ func (f *fakeClient) Health(context.Context, peers.Peer) error { return nil }
 
 func newManager(t *testing.T, c dispatch.PeerClient, defaults config.RunDefaults) *Manager {
 	t.Helper()
+	return newManagerWithSlot(t, c, defaults, &dispatch.CoordinatorSlot{})
+}
+
+func newManagerWithSlot(t *testing.T, c dispatch.PeerClient, defaults config.RunDefaults, slot *dispatch.CoordinatorSlot) *Manager {
+	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	d := &dispatch.Dispatcher{
 		Client: c,
@@ -47,7 +53,7 @@ func newManager(t *testing.T, c dispatch.PeerClient, defaults config.RunDefaults
 		Logger: logger,
 	}
 	list := []peers.Peer{{ID: "peer-1", URL: "http://peer-1:8000"}, {ID: "peer-2", URL: "http://peer-2:8000"}}
-	return NewManager(context.Background(), d, list, "peer-1", defaults, time.Minute, logger)
+	return NewManager(context.Background(), d, list, "peer-1", defaults, slot, time.Minute, logger)
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -147,6 +153,29 @@ func TestBatchWithoutSerialBaseline(t *testing.T) {
 	r := b.Report()
 	if r.Timing.SerialWallSeconds != nil || r.Timing.Speedup != nil || r.Phase != PhaseComplete {
 		t.Fatalf("unexpected serial timing: %+v", r.Timing)
+	}
+}
+
+func TestBusyWhileABatchOfAnotherKindRuns(t *testing.T) {
+	slot := &dispatch.CoordinatorSlot{}
+	m := newManagerWithSlot(t, &fakeClient{}, config.Default().Defaults, slot)
+	if _, ok := slot.TryAcquire("net-other"); !ok {
+		t.Fatal("fresh slot should be free")
+	}
+
+	b, err := m.Start(Request{Replications: ptr(4)})
+	if !errors.Is(err, ErrBusy) || b != nil || !strings.Contains(err.Error(), "net-other") {
+		t.Fatalf("start while another kind runs: batch=%v err=%v", b, err)
+	}
+
+	slot.Release("net-other")
+	b, err = m.Start(Request{Replications: ptr(4)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, b)
+	if _, ok := slot.TryAcquire("net-next"); !ok {
+		t.Fatal("slot should be free once the batch has finished")
 	}
 }
 

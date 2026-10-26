@@ -2,6 +2,7 @@ import { ArrowRight, Dices, LoaderCircle, Play, RotateCcw, Server, TriangleAlert
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, createApiClient } from "../api/client";
 import type { GatewayConfig, MockScenario, Peer, RunCreated, RunParameters, RunRecord } from "../api/types";
+import { startRun } from "../lib/resubmit";
 import { randomSeed, validateRun, type RunField } from "../lib/validation";
 
 type NumericField = Exclude<keyof RunParameters, "serial_baseline" | "baseline" | "parts" | "kind" | "scenario">;
@@ -68,7 +69,7 @@ export function LaunchPage({
   /** Prefill from this run (same parameters and base seed) on a different coordinator. */
   resubmitRunId?: string | null;
 }) {
-  const api = createApiClient(scenario);
+  const api = useMemo(() => createApiClient(scenario), [scenario]);
   const [config, setConfig] = useState<GatewayConfig | null>(null);
   const [healthyIds, setHealthyIds] = useState<Set<string>>(new Set());
   const [coordinator, setCoordinator] = useState("");
@@ -101,8 +102,10 @@ export function LaunchPage({
       if (active) setLoadError(cause instanceof Error ? cause.message : "Unable to load launch settings.");
     });
     return () => { active = false; };
-  }, [scenario, resubmitRunId]);
+  }, [api, resubmitRunId]);
 
+  // Network and partitioned runs are resubmitted as recorded; the M/M/1 form does not apply.
+  const recorded = resubmitOf?.params.kind === "network" || resubmitOf?.params.kind === "pdes" ? resubmitOf.params : null;
   const params = useMemo(() => draft ? toParams(draft) : null, [draft]);
   const validation = useMemo(() => params ? validateRun(params) : null, [params]);
   const healthyPeer = healthyIds.has(coordinator);
@@ -115,17 +118,18 @@ export function LaunchPage({
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!params || !validation || !config) return;
+    const submitted = recorded ?? params;
+    if (!submitted || !validation || !config) return;
     setSubmitError(null);
     setBusyConflict(false);
-    if (Object.keys(validation.errors).length > 0) return;
+    if (!recorded && Object.keys(validation.errors).length > 0) return;
     if (!healthyPeer) {
       setSubmitError("Select a healthy coordinator before starting the run.");
       return;
     }
     setSubmitting(true);
     try {
-      const result = await api.createRun(coordinator, params);
+      const result = await startRun(api, coordinator, submitted);
       onStarted(result);
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 409) {
@@ -147,6 +151,22 @@ export function LaunchPage({
   }
 
   const theoretical = validation.theoretical;
+  const coordinatorSection = (
+    <section className="form-section">
+      <div className="form-section-heading"><span className="section-index">01</span><div><h2>Coordinator</h2><p>One node owns this batch's live state.</p></div></div>
+      <label className="field-label" htmlFor="coordinator">Run on</label>
+      <div className="select-wrap"><Server size={16} /><select id="coordinator" value={coordinator} onChange={(event) => setCoordinator(event.target.value)}>
+        {config.peers.map((peer) => <option key={peer.id} value={peer.id} disabled={!healthyIds.has(peer.id)}>{peer.id}{healthyIds.has(peer.id) ? " · healthy" : " · unreachable"}</option>)}
+      </select></div>
+      <p className="field-help">{config.peers.length} configured nodes · {healthyIds.size} currently healthy</p>
+    </section>
+  );
+  const submitButton = (disabled: boolean) => (
+    <button className="primary-button" type="submit" disabled={submitting || disabled || !healthyPeer}>
+      {submitting ? <LoaderCircle size={17} className="button-spin" /> : <Play size={16} fill="currentColor" />}
+      {submitting ? "Starting run" : "Start simulation"}
+    </button>
+  );
   return (
     <section className="page-content launch-content" aria-labelledby="launch-heading">
       <div className="page-heading">
@@ -159,7 +179,7 @@ export function LaunchPage({
 
       {resubmitOf && (
         <div className="notice notice-info" role="status">
-          <RotateCcw size={15} /> Resubmitting batch {resubmitOf.batch_id} from {resubmitOf.coordinator} with the same parameters and base seed {resubmitOf.params.base_seed}. The same seed reproduces the same statistics.
+          <RotateCcw size={15} /> Resubmitting {recorded ? "the recorded " : ""}batch {resubmitOf.batch_id} from {resubmitOf.coordinator} with the same {recorded ? "scenario" : "parameters"} and base seed {resubmitOf.params.base_seed}. The same seed reproduces the same statistics.
         </div>
       )}
       {submitError && <div className={`notice ${busyConflict ? "notice-warning" : "notice-error"}`} role="alert">{submitError}</div>}
@@ -170,16 +190,23 @@ export function LaunchPage({
         </div>
       )}
 
+      {recorded ? (
+        <form className="launch-form" onSubmit={handleSubmit} noValidate>
+          <div className="form-main">{coordinatorSection}</div>
+          <aside className="run-aside" aria-label="Run summary">
+            <p className="aside-label">{recorded.kind === "pdes" ? "PARTITIONED RUN" : "NETWORK RUN"}</p>
+            {recorded.kind === "pdes"
+              ? <div className="aside-detail"><span>Parts</span><strong>{recorded.parts ?? "--"}</strong></div>
+              : <div className="aside-detail"><span>Replications</span><strong>{recorded.replications}</strong></div>}
+            <div className="aside-detail"><span>Base seed</span><strong>{recorded.base_seed}</strong></div>
+            <div className="aside-detail"><span>Coordinator</span><strong>{coordinator || "--"}</strong></div>
+            {submitButton(false)}
+          </aside>
+        </form>
+      ) : (
       <form className="launch-form" onSubmit={handleSubmit} noValidate>
         <div className="form-main">
-          <section className="form-section">
-            <div className="form-section-heading"><span className="section-index">01</span><div><h2>Coordinator</h2><p>One node owns this batch's live state.</p></div></div>
-            <label className="field-label" htmlFor="coordinator">Run on</label>
-            <div className="select-wrap"><Server size={16} /><select id="coordinator" value={coordinator} onChange={(event) => setCoordinator(event.target.value)}>
-              {config.peers.map((peer) => <option key={peer.id} value={peer.id} disabled={!healthyIds.has(peer.id)}>{peer.id}{healthyIds.has(peer.id) ? " · healthy" : " · unreachable"}</option>)}
-            </select></div>
-            <p className="field-help">{config.peers.length} configured nodes · {healthyIds.size} currently healthy</p>
-          </section>
+          {coordinatorSection}
 
           <section className="form-section">
             <div className="form-section-heading"><span className="section-index">02</span><div><h2>Queue model</h2><p>M/M/1 input rates and simulation horizon.</p></div></div>
@@ -224,13 +251,11 @@ export function LaunchPage({
           <div className="aside-divider" />
           <div className="aside-detail"><span>Replications</span><strong>{params.replications || "--"}</strong></div>
           <div className="aside-detail"><span>Coordinator</span><strong>{coordinator || "--"}</strong></div>
-          <button className="primary-button" type="submit" disabled={submitting || Object.keys(validation.errors).length > 0 || !healthyPeer}>
-            {submitting ? <LoaderCircle size={17} className="button-spin" /> : <Play size={16} fill="currentColor" />}
-            {submitting ? "Starting run" : "Start simulation"}
-          </button>
+          {submitButton(Object.keys(validation.errors).length > 0)}
           <p className="submit-note">The coordinator retains live batch state. If it is lost, resubmit with the same seed.</p>
         </aside>
       </form>
+      )}
     </section>
   );
 }

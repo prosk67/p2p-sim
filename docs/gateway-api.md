@@ -89,7 +89,7 @@ Body `{coordinator, scenario, parts}` where scenario is at most 4 MiB and parts 
 
 ### `POST /api/netstream`
 
-Body `{node, scenario, speed, seed?}`. Relays the named node's `POST /netstream` (only `{scenario, speed, seed}` is forwarded). Same error mapping as `/api/stream`.
+Body `{node, scenario, speed, seed?, start?}`. Relays the named node's `POST /netstream` (only `{scenario, speed, seed, start}` is forwarded; `start` is the simulated time to begin playback at). Same error mapping as `/api/stream`.
 
 ### `GET /api/runs?limit=&offset=`
 

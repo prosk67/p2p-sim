@@ -98,7 +98,12 @@ func NewHandler(m *batch.Manager, nodeID string, peerList []peers.Peer, client d
 			writeJSON(w, http.StatusBadRequest, errorBody{Error: ve.Msg})
 			return
 		case errors.Is(err, batch.ErrBusy):
-			writeJSON(w, http.StatusConflict, errorBody{Error: err.Error(), BatchID: b.ID})
+			// b is nil when a network batch holds the slot; its id is in the message.
+			body := errorBody{Error: err.Error()}
+			if b != nil {
+				body.BatchID = b.ID
+			}
+			writeJSON(w, http.StatusConflict, body)
 			return
 		case err != nil:
 			logger.Error("failed to start batch", "error", err)
@@ -130,6 +135,7 @@ func NewHandler(m *batch.Manager, nodeID string, peerList []peers.Peer, client d
 	mux.HandleFunc("POST /task", func(w http.ResponseWriter, r *http.Request) {
 		var t task.Task
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+		dec.DisallowUnknownFields()
 		if err := dec.Decode(&t); err != nil {
 			writeJSON(w, http.StatusBadRequest, taskErrorBody{Error: "invalid task JSON: " + err.Error()})
 			return

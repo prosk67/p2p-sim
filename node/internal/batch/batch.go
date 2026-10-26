@@ -180,6 +180,7 @@ type Manager struct {
 	peers        []peers.Peer
 	selfID       string
 	defaults     config.RunDefaults
+	slot         *dispatch.CoordinatorSlot
 	phaseTimeout time.Duration
 	logger       *slog.Logger
 
@@ -189,15 +190,17 @@ type Manager struct {
 }
 
 // NewManager creates a Manager for the node selfID, which must be in
-// peerList. Cancelling ctx stops running batches.
+// peerList. slot is shared with the node's other batch managers. Cancelling
+// ctx stops running batches.
 func NewManager(ctx context.Context, d *dispatch.Dispatcher, peerList []peers.Peer, selfID string,
-	defaults config.RunDefaults, phaseTimeout time.Duration, logger *slog.Logger) *Manager {
+	defaults config.RunDefaults, slot *dispatch.CoordinatorSlot, phaseTimeout time.Duration, logger *slog.Logger) *Manager {
 	return &Manager{
 		ctx:          ctx,
 		dispatcher:   d,
 		peers:        peerList,
 		selfID:       selfID,
 		defaults:     defaults,
+		slot:         slot,
 		phaseTimeout: phaseTimeout,
 		logger:       logger,
 		batches:      make(map[string]*Batch),
@@ -205,9 +208,10 @@ func NewManager(ctx context.Context, d *dispatch.Dispatcher, peerList []peers.Pe
 }
 
 // Start validates req and launches a batch in the background. Only one batch
-// runs per coordinating node at a time so its timing measurements are not
-// distorted; a concurrent request gets ErrBusy together with the running
-// batch. (Other nodes may still coordinate batches of their own.)
+// of any kind runs per coordinating node at a time so its timing measurements
+// are not distorted; a concurrent request gets ErrBusy, together with the
+// running batch when it is an M/M/1 batch. (Other nodes may still coordinate
+// batches of their own.)
 func (m *Manager) Start(req Request) (*Batch, error) {
 	now := time.Now()
 	spec, err := Resolve(req, m.defaults, now)
@@ -221,13 +225,16 @@ func (m *Manager) Start(req Request) (*Batch, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.latest != nil && !m.latest.finished() {
-		return m.latest, ErrBusy
+	id := newBatchID(m.selfID, now)
+	if holder, ok := m.slot.TryAcquire(id); !ok {
+		if running, mine := m.batches[holder]; mine {
+			return running, ErrBusy
+		}
+		return nil, fmt.Errorf("%w: batch %s is still running", ErrBusy, holder)
 	}
 
 	m.evictOldLocked()
 
-	id := newBatchID(m.selfID, now)
 	b := &Batch{
 		ID:          id,
 		Coordinator: m.selfID,
@@ -283,6 +290,7 @@ func newBatchID(nodeID string, now time.Time) string {
 
 func (m *Manager) execute(b *Batch) {
 	defer close(b.done)
+	defer m.slot.Release(b.ID)
 	log := m.logger.With("batch_id", b.ID)
 	log.Info("batch started",
 		"coordinator", b.Coordinator,

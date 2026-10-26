@@ -127,7 +127,7 @@ func pipeLines(parent, ctx context.Context, limit time.Duration, cmd *exec.Cmd, 
 			break
 		}
 	}
-	if callbackErr != nil && cmd.Process != nil {
+	if (callbackErr != nil || scanner.Err() != nil) && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()

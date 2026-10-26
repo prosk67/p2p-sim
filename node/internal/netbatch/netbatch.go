@@ -31,7 +31,7 @@ const (
 	maxRetained         = 10
 )
 
-var ErrBusy = errors.New("a network batch is already running on this node")
+var ErrBusy = errors.New("a batch is already running on this node")
 
 type ValidationError struct{ Msg string }
 
@@ -84,6 +84,7 @@ type Manager struct {
 	peers        []peers.Peer
 	selfID       string
 	validator    Validator
+	slot         *dispatch.CoordinatorSlot
 	phaseTimeout time.Duration
 	logger       *slog.Logger
 
@@ -92,9 +93,11 @@ type Manager struct {
 	latest  *Batch
 }
 
+// NewManager creates a Manager; slot is shared with the node's M/M/1 batch
+// manager so the node coordinates one batch of either kind at a time.
 func NewManager(ctx context.Context, d *dispatch.Dispatcher, peerList []peers.Peer, selfID string,
-	v Validator, phaseTimeout time.Duration, logger *slog.Logger) *Manager {
-	return &Manager{ctx: ctx, dispatcher: d, peers: peerList, selfID: selfID, validator: v,
+	v Validator, slot *dispatch.CoordinatorSlot, phaseTimeout time.Duration, logger *slog.Logger) *Manager {
+	return &Manager{ctx: ctx, dispatcher: d, peers: peerList, selfID: selfID, validator: v, slot: slot,
 		phaseTimeout: phaseTimeout, logger: logger, batches: map[string]*Batch{}}
 }
 
@@ -131,12 +134,15 @@ func (m *Manager) Start(ctx context.Context, req Request) (*Batch, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.latest != nil && !m.latest.finished() {
-		return m.latest, ErrBusy
+	id := newBatchID(m.selfID, now)
+	if holder, ok := m.slot.TryAcquire(id); !ok {
+		if running, mine := m.batches[holder]; mine {
+			return running, ErrBusy
+		}
+		return nil, fmt.Errorf("%w: batch %s is still running", ErrBusy, holder)
 	}
 	m.evictOldLocked()
 
-	id := newBatchID(m.selfID, now)
 	tasks := dispatch.GenerateTasks(id, reps, seed, dispatch.SimParams{})
 	for i := range tasks {
 		tasks[i].Network = task.RawJSON(req.Scenario)
@@ -183,6 +189,7 @@ func newBatchID(nodeID string, now time.Time) string {
 
 func (m *Manager) execute(b *Batch) {
 	defer close(b.done)
+	defer m.slot.Release(b.ID)
 	log := m.logger.With("batch_id", b.ID)
 	log.Info("network batch started", "replications", b.Replications, "base_seed", b.BaseSeed,
 		"nodes", b.Summary.Nodes, "links", b.Summary.Links, "flows", b.Summary.Flows, "peers", len(b.Peers))
@@ -210,14 +217,20 @@ type StatusView struct {
 }
 
 func (b *Batch) Status() StatusView {
-	b.mu.Lock()
-	finished := b.finishedAt
-	b.mu.Unlock()
+	return b.status(b.finished())
+}
+
+// status builds the view for a known finished state. finishedAt is set before
+// done closes, so it must be read after finished was checked.
+func (b *Batch) status(finished bool) StatusView {
 	v := StatusView{Kind: "network", BatchID: b.ID, Coordinator: b.Coordinator, State: "running",
 		Phase: "distributed", Replications: b.Replications, Counts: b.tracker.Counts()}
 	end := time.Now()
-	if b.finished() {
-		v.State, v.Phase, end = "complete", "complete", finished
+	if finished {
+		b.mu.Lock()
+		end = b.finishedAt
+		b.mu.Unlock()
+		v.State, v.Phase = "complete", "complete"
 	}
 	v.ElapsedSeconds = end.Sub(b.StartedAt).Seconds()
 	return v

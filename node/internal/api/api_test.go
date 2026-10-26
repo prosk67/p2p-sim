@@ -46,6 +46,11 @@ func (f *fakeExec) Execute(_ context.Context, t task.Task) (task.Result, error) 
 
 func newServer(t *testing.T, exec TaskExecutor) *httptest.Server {
 	t.Helper()
+	return newServerWithSlot(t, exec, &dispatch.CoordinatorSlot{})
+}
+
+func newServerWithSlot(t *testing.T, exec TaskExecutor, slot *dispatch.CoordinatorSlot) *httptest.Server {
+	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	list := []peers.Peer{{ID: "p1", URL: "http://p1:8000"}, {ID: "down", URL: "http://down:8000"}}
 	d := &dispatch.Dispatcher{
@@ -53,7 +58,7 @@ func newServer(t *testing.T, exec TaskExecutor) *httptest.Server {
 		Config: dispatch.Config{MaxAttempts: 3, BackoffInitial: time.Millisecond, BackoffMax: time.Millisecond},
 		Logger: logger,
 	}
-	m := batch.NewManager(context.Background(), d, list, "p1", config.Default().Defaults, time.Minute, logger)
+	m := batch.NewManager(context.Background(), d, list, "p1", config.Default().Defaults, slot, time.Minute, logger)
 	srv := httptest.NewServer(NewHandler(m, "p1", list, fakeClient{}, exec, logger))
 	t.Cleanup(srv.Close)
 	return srv
@@ -94,6 +99,16 @@ func TestRunValidation(t *testing.T) {
 		if code, out := do(t, "POST", srv.URL+"/run", body); code != http.StatusBadRequest {
 			t.Errorf("%s: status %d (%v), want 400", body, code, out)
 		}
+	}
+}
+
+func TestRunBusyWhileANetworkBatchRuns(t *testing.T) {
+	slot := &dispatch.CoordinatorSlot{}
+	slot.TryAcquire("net-p1-running")
+	srv := newServerWithSlot(t, &fakeExec{}, slot)
+	code, body := do(t, "POST", srv.URL+"/run", `{"replications": 4}`)
+	if code != http.StatusConflict || !strings.Contains(body["error"].(string), "net-p1-running") {
+		t.Fatalf("run: %d %v; want 409 naming the running batch", code, body)
 	}
 }
 
@@ -171,6 +186,7 @@ func TestTaskErrors(t *testing.T) {
 		{"busy", task.ErrBusy, taskJSON, http.StatusServiceUnavailable},
 		{"malformed", nil, `{"task_id":`, http.StatusBadRequest},
 		{"no task id", nil, `{"seed":1}`, http.StatusBadRequest},
+		{"unknown field", nil, `{"task_id":"b-0001","sed":11}`, http.StatusBadRequest},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

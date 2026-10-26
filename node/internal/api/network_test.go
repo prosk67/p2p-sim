@@ -42,8 +42,12 @@ func (okPool) RunTask(_ context.Context, p peers.Peer, t dispatch.Task) (dispatc
 func (okPool) Health(context.Context, peers.Peer) error { return nil }
 
 func networkHandler(t *testing.T) (http.Handler, *netbatch.Manager) {
+	return networkHandlerWithSlot(t, &dispatch.CoordinatorSlot{})
+}
+
+func networkHandlerWithSlot(t *testing.T, slot *dispatch.CoordinatorSlot) (http.Handler, *netbatch.Manager) {
 	d := &dispatch.Dispatcher{Client: okPool{}, Config: dispatch.Config{MaxAttempts: 2, BackoffInitial: time.Millisecond, BackoffMax: time.Millisecond}, Logger: quietLogger()}
-	m := netbatch.NewManager(context.Background(), d, []peers.Peer{{ID: "node-1"}, {ID: "node-2"}}, "node-1", fakeNetSim{peak: 10}, time.Minute, quietLogger())
+	m := netbatch.NewManager(context.Background(), d, []peers.Peer{{ID: "node-1"}, {ID: "node-2"}}, "node-1", fakeNetSim{peak: 10}, slot, time.Minute, quietLogger())
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(299) })
 	return NetworkHandler(m, fakeNetSim{peak: 10}, &fakeSlots{}, "node-1", quietLogger(), next), m
 }
@@ -83,6 +87,16 @@ func TestNetrunAndStatusReport(t *testing.T) {
 	}
 	if rec := netDo(h, "POST", "/netrun", `{"scenario":{},"extra":1}`); rec.Code != 400 {
 		t.Fatalf("unknown field: %d", rec.Code)
+	}
+}
+
+func TestNetrunBusyWhileAnMM1BatchRuns(t *testing.T) {
+	slot := &dispatch.CoordinatorSlot{}
+	slot.TryAcquire("batch-node-1-running")
+	h, _ := networkHandlerWithSlot(t, slot)
+	rec := netDo(h, "POST", "/netrun", `{"scenario":{"duration":10},"replications":4}`)
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "batch-node-1-running") {
+		t.Fatalf("netrun: %d %s; want 409 naming the running batch", rec.Code, rec.Body)
 	}
 }
 

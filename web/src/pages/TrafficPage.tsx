@@ -253,27 +253,37 @@ export function TrafficPage({ scenario, mockEnabled }: { scenario: MockScenario;
     return () => { active = false; };
   }, [api]);
 
-  // Apply buffered events once per animation frame.
-  useEffect(() => {
-    let raf = 0;
+  // Apply buffered events once per animation frame while a stream runs, then
+  // until departing packets have finished animating; idle pages do not re-render.
+  const rafRef = useRef(0);
+  const leavingRef = useRef(false);
+  const animate = () => {
+    if (rafRef.current) return;
     const tick = () => {
       frameRef.current += 1;
       const events = buffer.current.splice(0);
       const now = performance.now();
-      setState((s) => pruneLeaving(applyEvents(s, events, frameRef.current, now), now));
+      setState((s) => {
+        const next = pruneLeaving(applyEvents(s, events, frameRef.current, now), now);
+        leavingRef.current = next.leaving.length > 0;
+        return next;
+      });
       setFrame(frameRef.current);
       for (const e of events) {
         if (e.type === "error") setStatus("error");
         else if (e.type === "done") setStatus("finished");
         else if (statusRef.current === "connecting") setStatus("streaming");
       }
-      raf = requestAnimationFrame(tick);
+      const streaming = statusRef.current === "connecting" || statusRef.current === "streaming";
+      rafRef.current = streaming || events.length > 0 || buffer.current.length > 0 || leavingRef.current ? requestAnimationFrame(tick) : 0;
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
+    rafRef.current = requestAnimationFrame(tick);
+  };
 
-  useEffect(() => () => closeRef.current?.(), []);
+  useEffect(() => () => {
+    closeRef.current?.();
+    cancelAnimationFrame(rafRef.current);
+  }, []);
 
   const params = {
     lambda: Number(draft.lambda), mu: Number(draft.mu), speed: Number(draft.speed),
@@ -289,7 +299,9 @@ export function TrafficPage({ scenario, mockEnabled }: { scenario: MockScenario;
     buffer.current = [];
     setState(initialTraffic);
     setStatus("connecting");
+    statusRef.current = "connecting";
     closeRef.current = api.openTraffic({ node, ...params }, (event) => buffer.current.push(event));
+    animate();
   };
   const stop = () => {
     closeRef.current?.();

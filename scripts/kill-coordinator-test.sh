@@ -20,14 +20,12 @@ curl -fsS -X POST "$FIRST/run" -H "Content-Type: application/json" -d "$body" >/
 until [[ "$(curl -fsS "$FIRST/status" | field complete)" -ge $((REPS / 5)) ]]; do sleep 0.5; done
 echo "stopping coordinator $FIRST_CONTAINER at: $(curl -fsS "$FIRST/status" | tr -d '\n ')"
 docker stop -t 0 "$FIRST_CONTAINER" >/dev/null
+trap 'docker start "$FIRST_CONTAINER" >/dev/null && echo "restarted $FIRST_CONTAINER"' EXIT
 
 echo "resubmitting base_seed=$SEED to $SECOND"
 curl -fsS -X POST "$SECOND/run" -H "Content-Type: application/json" -d "$body" | tr -d '\n '; echo
 until curl -fsS "$SECOND/status" | grep -q '"state": "complete"'; do sleep 1; done
 report="$(curl -fsS "$SECOND/report")"
-
-docker start "$FIRST_CONTAINER" >/dev/null
-echo "restarted $FIRST_CONTAINER"
 
 complete="$(echo "$report" | sed -n '/"tasks"/,/}/p' | field complete)"
 failed="$(echo "$report" | sed -n '/"tasks"/,/}/p' | field failed)"

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -57,10 +58,60 @@ func (v fakeValidator) Validate(context.Context, []byte) (sim.Summary, error) {
 }
 
 func manager(t *testing.T, pool *fakePool, v Validator) *Manager {
+	return managerWithSlot(t, pool, v, &dispatch.CoordinatorSlot{})
+}
+
+func managerWithSlot(t *testing.T, pool *fakePool, v Validator, slot *dispatch.CoordinatorSlot) *Manager {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	d := &dispatch.Dispatcher{Client: pool, Config: dispatch.Config{MaxAttempts: 3, BackoffInitial: time.Millisecond, BackoffMax: time.Millisecond}, Logger: log}
 	list := []peers.Peer{{ID: "node-1"}, {ID: "node-2"}, {ID: "node-3"}}
-	return NewManager(context.Background(), d, list, "node-1", v, time.Minute, log)
+	return NewManager(context.Background(), d, list, "node-1", v, slot, time.Minute, log)
+}
+
+func TestBusyWhileABatchOfAnotherKindRuns(t *testing.T) {
+	slot := &dispatch.CoordinatorSlot{}
+	m := managerWithSlot(t, &fakePool{scenarios: map[string]int{}}, fakeValidator{}, slot)
+	if _, ok := slot.TryAcquire("batch-other"); !ok {
+		t.Fatal("fresh slot should be free")
+	}
+
+	b, err := m.Start(context.Background(), Request{Scenario: []byte(`{}`), Replications: ptr(4)})
+	if !errors.Is(err, ErrBusy) || b != nil || !strings.Contains(err.Error(), "batch-other") {
+		t.Fatalf("start while another kind runs: batch=%v err=%v", b, err)
+	}
+
+	slot.Release("batch-other")
+	b, err = m.Start(context.Background(), Request{Scenario: []byte(`{}`), Replications: ptr(4)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-b.Done()
+	if _, ok := slot.TryAcquire("batch-next"); !ok {
+		t.Fatal("slot should be free once the batch has finished")
+	}
+}
+
+// Status read concurrently with the end of a batch must never pair the
+// "complete" state with an unset finish time (a hugely negative elapsed time).
+func TestStatusNeverReportsNegativeElapsedTime(t *testing.T) {
+	for i := 0; i < 2000; i++ {
+		b := &Batch{StartedAt: time.Now().Add(-time.Second), tracker: dispatch.NewTracker(nil), done: make(chan struct{})}
+		go func() {
+			b.mu.Lock()
+			b.finishedAt = time.Now()
+			b.mu.Unlock()
+			close(b.done)
+		}()
+		for {
+			st := b.Status()
+			if st.ElapsedSeconds < 0 {
+				t.Fatalf("iteration %d: elapsed %v with state %s", i, st.ElapsedSeconds, st.State)
+			}
+			if st.State == "complete" {
+				break
+			}
+		}
+	}
 }
 
 func ptr[T any](v T) *T { return &v }

@@ -66,6 +66,15 @@ func TestStreamReportsFailure(t *testing.T) {
 	}
 }
 
+func TestStreamStopsPromptlyOnUnreadableOutput(t *testing.T) {
+	s := &Streamer{Command: shell(`head -c 1100000 /dev/zero | tr '\0' a; echo; exec sleep 30`)}
+	start := time.Now()
+	err := s.Stream(context.Background(), valid, func([]byte) error { return nil })
+	if err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("got %v after %s; want a prompt read error", err, time.Since(start))
+	}
+}
+
 func TestStreamStopsWhenViewerLeaves(t *testing.T) {
 	s := &Streamer{Command: shell(`while true; do echo '{"type":"stats"}'; sleep 0.01; done`)}
 	stop := errors.New("viewer left")

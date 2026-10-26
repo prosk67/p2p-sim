@@ -107,9 +107,10 @@ func run(logger *slog.Logger) error {
 		},
 		Logger: logger,
 	}
-	manager := batch.NewManager(ctx, dispatcher, peerList, nodeID, cfg.Defaults, cfg.PhaseTimeout, logger)
+	slot := &dispatch.CoordinatorSlot{}
+	manager := batch.NewManager(ctx, dispatcher, peerList, nodeID, cfg.Defaults, slot, cfg.PhaseTimeout, logger)
 	netsim := &sim.Network{Python: cfg.PythonBin, Script: netScript}
-	netManager := netbatch.NewManager(ctx, dispatcher, peerList, nodeID, netsim, cfg.PhaseTimeout, logger)
+	netManager := netbatch.NewManager(ctx, dispatcher, peerList, nodeID, netsim, slot, cfg.PhaseTimeout, logger)
 	pdesHost := pdes.NewHost(ctx, (pdes.ProcessFactory{Python: cfg.PythonBin, Script: netScript}).New,
 		executor, 60*time.Second)
 	defer pdesHost.Close()

@@ -185,7 +185,7 @@ export function NetworkPage({ scenario: mockScenario }: { scenario: MockScenario
       window.location.hash = `#/live/${encodeURIComponent(created.run_id)}`;
     } catch (cause) {
       const busy = cause instanceof ApiError && cause.status === 409;
-      setNotice({ kind: "error", text: busy ? `${coordinator} is already coordinating a network run; pick another coordinator or wait.` : cause instanceof Error ? cause.message : "Could not start the run." });
+      setNotice({ kind: "error", text: busy ? `${coordinator} is already coordinating a run; pick another coordinator or wait.` : cause instanceof Error ? cause.message : "Could not start the run." });
     } finally {
       setSubmitting(false);
     }
@@ -233,11 +233,13 @@ export function NetworkPage({ scenario: mockScenario }: { scenario: MockScenario
 
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(toWire(sc), null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    a.href = url;
     a.download = "network.json";
     a.click();
-    URL.revokeObjectURL(a.href);
+    // Revoking synchronously can cancel the download before the browser starts it.
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const importJson = async (file: File | undefined) => {
     if (!file) return;

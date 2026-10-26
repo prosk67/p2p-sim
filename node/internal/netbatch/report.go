@@ -123,14 +123,14 @@ type FailedTask struct {
 }
 
 func (b *Batch) Report() Report {
-	b.mu.Lock()
-	wall := b.wall
-	b.mu.Unlock()
 	finished := b.finished()
-	if !finished {
-		wall = time.Since(b.StartedAt)
+	wall := time.Since(b.StartedAt)
+	if finished {
+		b.mu.Lock()
+		wall = b.wall
+		b.mu.Unlock()
 	}
-	st := b.Status()
+	st := b.status(finished)
 	r := Report{
 		Kind: "network", BatchID: b.ID, Coordinator: b.Coordinator, State: st.State, Phase: st.Phase,
 		ReplicationsRequested: b.Replications, BaseSeed: b.BaseSeed, SeedScheme: dispatch.SeedScheme,
