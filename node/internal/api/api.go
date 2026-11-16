@@ -5,6 +5,7 @@
 //	GET  /report  aggregated statistics for such a batch (?batch_id=, default latest)
 //	GET  /peers   health of every node in the static peer list
 //	GET  /health  liveness
+//	GET  /resources  CPU, memory, network and slot usage (wired in cmd/node)
 //	POST /task    execute one replication (node-to-node)
 package api
 

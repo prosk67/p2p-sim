@@ -34,6 +34,7 @@ type Node struct {
 	streamBusy      bool
 	streamQueries   []string
 	pdesFailure     bool
+	noResources     bool
 }
 
 type batch struct {
@@ -88,6 +89,14 @@ func (n *Node) SetSteps(steps int) { n.mu.Lock(); n.stepsToComplete = steps; n.m
 
 func (n *Node) SetPDESFailure(failed bool) { n.mu.Lock(); n.pdesFailure = failed; n.mu.Unlock() }
 
+// SetNoResources makes GET /resources answer 404, like a node built before
+// that endpoint existed.
+func (n *Node) SetNoResources(v bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.noResources = v
+}
+
 // SetSees sets this node's reported view of a peer's health.
 func (n *Node) SetSees(peerID string, healthy bool) {
 	n.mu.Lock()
@@ -140,6 +149,16 @@ func (n *Node) serve(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"status": "ok", "node_id": n.ID, "peers": len(n.peersSeen())})
 	case r.Method == http.MethodGet && r.URL.Path == "/peers":
 		write(w, 200, map[string]any{"node_id": n.ID, "peers": n.peersSeen()})
+	case r.Method == http.MethodGet && r.URL.Path == "/resources":
+		n.mu.Lock()
+		missing := n.noResources
+		n.mu.Unlock()
+		if missing {
+			write(w, 404, map[string]any{"error": "not found"})
+			return
+		}
+		write(w, 200, map[string]any{"node_id": n.ID, "scope": "container",
+			"slots": map[string]any{"in_use": 1, "total": 2}})
 	case r.Method == http.MethodPost && r.URL.Path == "/run":
 		n.run(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/status":

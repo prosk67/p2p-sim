@@ -4,6 +4,7 @@ package aggregate
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"sync"
 	"time"
@@ -19,7 +20,10 @@ type Node struct {
 	ObserverID *string         `json:"observer_id"`
 	LatencyMS  *float64        `json:"latency_ms"`
 	PeersSeen  map[string]bool `json:"peers_seen"`
-	Error      string          `json:"error,omitempty"`
+	// Resources is the node's GET /resources body, or null when the node did
+	// not provide one (an older node, or the call failed).
+	Resources json.RawMessage `json:"resources"`
+	Error     string          `json:"error,omitempty"`
 }
 
 type Snapshot struct {
@@ -49,8 +53,8 @@ func Cluster(ctx context.Context, client *nodeclient.Client, peers []config.Peer
 	return Snapshot{Nodes: nodes, UpdatedAt: time.Now().UTC()}
 }
 
-func probe(ctx context.Context, client *nodeclient.Client, peer config.Peer) Node {
-	node := Node{ID: peer.ID, URL: peer.URL, PeersSeen: map[string]bool{}}
+func probe(ctx context.Context, client *nodeclient.Client, peer config.Peer) (node Node) {
+	node = Node{ID: peer.ID, URL: peer.URL, PeersSeen: map[string]bool{}}
 	start := time.Now()
 	_, err := client.Health(ctx, peer.URL)
 	if err != nil {
@@ -60,6 +64,14 @@ func probe(ctx context.Context, client *nodeclient.Client, peer config.Peer) Nod
 	latency := math.Round(float64(time.Since(start).Microseconds())/100) / 10
 	node.Healthy = true
 	node.LatencyMS = &latency
+
+	// /peers makes the node probe every peer, so fetch usage alongside it.
+	usage := make(chan json.RawMessage, 1)
+	go func() {
+		body, _ := client.Resources(ctx, peer.URL)
+		usage <- body
+	}()
+	defer func() { node.Resources = <-usage }()
 
 	view, err := client.Peers(ctx, peer.URL)
 	if err != nil {

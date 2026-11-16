@@ -235,6 +235,7 @@ its own kind and passes other IDs to the next handler (`statusOrNext` /
 | GET | `/stream` | SSE live M/M/1 (ρ ≤ 1.5, λ×speed ≤ 200/s) |
 | POST | `/netstream` | SSE live network (≤ 150 packets/s) |
 | GET | `/health`, `/peers` | liveness; health of the peer list as seen from this node |
+| GET | `/resources` | this node's usage from its container cgroup (`internal/resources`, wired in `cmd/node`): slots, CPU, memory, network, PIDs; whole-machine figures outside a container |
 
 ### 4.3 Timeouts (config/node.yaml)
 `request_timeout 30s` must exceed `sim_timeout 25s`, so the executing node

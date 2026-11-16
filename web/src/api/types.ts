@@ -44,6 +44,23 @@ export interface GatewayConfig {
   };
 }
 
+/**
+ * A node's own usage report (node `GET /resources`). `container` scope is what
+ * `docker stats` shows for that node; `host` scope is the whole machine, used
+ * when the node is not running in a container. Rates are null until the node
+ * has taken two readings.
+ */
+export interface NodeResources {
+  node_id: string;
+  scope: "container" | "host";
+  slots: { in_use: number; total: number };
+  cpu: { cores_used: number; cores: number; percent: number } | null;
+  memory: { used_bytes: number; limit_bytes: number } | null;
+  pids: number | null;
+  net: { rx_bytes_per_sec: number; tx_bytes_per_sec: number } | null;
+  sampled_at: string;
+}
+
 export interface ClusterNode {
   id: string;
   url: string;
@@ -51,6 +68,8 @@ export interface ClusterNode {
   observer_id: string | null;
   latency_ms: number | null;
   peers_seen: Record<string, boolean | null>;
+  /** Null when the node is down or does not report usage. */
+  resources?: NodeResources | null;
   error?: string;
 }
 

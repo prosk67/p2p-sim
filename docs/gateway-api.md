@@ -51,13 +51,25 @@ Always returns `200`; individual node failures are represented in rows:
     "healthy":true,
     "observer_id":"node-1",
     "latency_ms":3,
-    "peers_seen":{"node-1":true,"node-2":false}
+    "peers_seen":{"node-1":true,"node-2":false},
+    "resources":{
+      "node_id":"node-1",
+      "scope":"container",
+      "slots":{"in_use":1,"total":2},
+      "cpu":{"cores_used":1.03,"cores":16,"percent":6.4},
+      "memory":{"used_bytes":23891968,"limit_bytes":805306368},
+      "pids":16,
+      "net":{"rx_bytes_per_sec":7020,"tx_bytes_per_sec":4951},
+      "sampled_at":"2026-10-02T12:00:00Z"
+    }
   }],
   "updated_at":"2026-10-02T12:00:00Z"
 }
 ```
 
 `observer_id` is the node that supplied the row's `/peers` view. `peers_seen` is based on that observer's own peer response; an absent key means unknown/not reported, while `false` means explicitly unhealthy. Include `error` on a row when its probe failed. Probe node endpoints concurrently with bounded concurrency and per-node timeouts. Measure `latency_ms` for the gateway's probe of that node.
+
+`resources` is the node's own `GET /resources` body passed through unchanged, or `null` when the node is down, predates that endpoint or failed the call (the row stays healthy). With `scope: "container"` the figures are the node's cgroup v2 counters — what `docker stats` shows for that container, Python simulators included; `cpu.cores_used × 100` is docker's CPU %. With `scope: "host"` the node is not in a container and CPU, memory and network describe the whole machine. `cpu` and `net` are rates over the node's last 2-second sample and are `null` until it has two readings; `pids` is `null` in host scope. `slots` is simulations running out of `max_concurrent_tasks`.
 
 ### `POST /api/runs`
 

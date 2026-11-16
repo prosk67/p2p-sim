@@ -146,6 +146,7 @@ Threat campaigns (`sim/attacksim.py`, same CLI contract): `POST /attack/plan {sc
 | GET    | `/report` | Mean, stddev and 95% CI per metric vs M/M/1 theory; verdict; tasks per node; distributed vs serial wall clock and speedup. |
 | GET    | `/peers`  | Health of every node in the peer list (`self` marks this node). |
 | GET    | `/health` | `{"status":"ok","node_id","peers"}` |
+| GET    | `/resources` | this node's CPU, memory, network, PIDs (as `docker stats` shows them) and simulation slots in use |
 | POST   | `/task`   | Node-to-node: run one replication. Returns `200` Result, `400 {"task_id","error"}` if the simulation failed, or `503` if the node is at `max_concurrent_tasks`. |
 
 **Simulation CLI contract:**

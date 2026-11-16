@@ -8,6 +8,7 @@ import type {
   GatewayConfig,
   HealthResponse,
   MockScenario,
+  NodeResources,
   NodeReport,
   NodeStatus,
   PartitionPlan,
@@ -53,6 +54,23 @@ function batchId(coordinator: string, now: Date): string {
   return `batch-${coordinator}-${stamp}-${suffix}`;
 }
 
+/** Plausible, gently moving usage so the Cluster page meters have something to show. */
+function mockResources(id: string, index: number, busy: boolean, now: number): NodeResources {
+  const wave = (Math.sin(now / 9000 + index * 1.7) + 1) / 2;
+  const cores = 4;
+  const percent = busy ? 55 + wave * 35 : 2 + wave * 6;
+  return {
+    node_id: id,
+    scope: "container",
+    slots: { in_use: busy ? 2 : 0, total: 2 },
+    cpu: { cores_used: (percent / 100) * cores, cores, percent },
+    memory: { used_bytes: (busy ? 180 : 42) * 1024 * 1024 + wave * 8e6, limit_bytes: 512 * 1024 * 1024 },
+    pids: busy ? 14 : 9,
+    net: { rx_bytes_per_sec: busy ? 24000 + wave * 9000 : 400, tx_bytes_per_sec: busy ? 31000 + wave * 9000 : 520 },
+    sampled_at: new Date(now).toISOString(),
+  };
+}
+
 const basePeers = [
   { id: "node-1", url: "http://127.0.0.1:8081" },
   { id: "node-2", url: "http://127.0.0.1:8082" },
@@ -91,6 +109,7 @@ export class MockApiClient implements ApiClient {
     const lostCoordinators = new Set(this.scenario === "coordinator-loss"
       ? store().filter((run) => isLost(run, now)).map((run) => run.coordinator)
       : []);
+    const running = new Set(store().filter((run) => runState(run, now) === "running").map((run) => run.coordinator));
     const nodes: ClusterNode[] = peers.map((peer, index) => {
       const workerDown = this.scenario === "worker-failure" && peer.id === "node-2";
       const coordinatorDown = (this.scenario === "coordinator-loss" && peer.id === "node-1") || lostCoordinators.has(peer.id);
@@ -111,6 +130,7 @@ export class MockApiClient implements ApiClient {
               ? false
               : true,
         ])),
+        resources: healthy ? mockResources(peer.id, index, running.has(peer.id), now) : null,
         ...(!healthy ? { error: "Connection timed out" } : {}),
       };
     });

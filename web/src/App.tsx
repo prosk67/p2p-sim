@@ -2,9 +2,11 @@ import { Activity, ChevronDown, CircleHelp, CircleX, Clock3, Network, RadioTower
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createApiClient } from "./api/client";
 import { MOCK_SCENARIOS, type ClusterSnapshot, type GatewayConfig, type MockScenario, type RunCreated } from "./api/types";
+import { NodeResources } from "./components/NodeResources";
 import { EmptyState, LoadingState, Notice, PageHeading, SectionTitle, StatStrip } from "./components/PagePrimitives";
 import { parseHash } from "./lib/format";
 import { startPolling } from "./lib/poll";
+import { poolUsage, pushHistory } from "./lib/resources";
 import { AttackPage } from "./pages/AttackPage";
 import { LaunchPage } from "./pages/LaunchPage";
 import { LivePage } from "./pages/LivePage";
@@ -34,6 +36,8 @@ function ClusterPage({
   const [manualState, setManualState] = useState<"idle" | "checking" | "done">("idle");
   const [matrixOpen, setMatrixOpen] = useState(false);
   const manualRefresh = useRef(false);
+  // Recent CPU readings per node, for the sparklines. Browser-only; lost on reload.
+  const [cpuHistory, setCpuHistory] = useState<Record<string, number[]>>({});
   const client = useMemo(() => createApiClient(scenario), [scenario]);
 
   useEffect(() => {
@@ -48,6 +52,7 @@ function ClusterPage({
         if (!active) return;
         setConfig(nextConfig);
         setSnapshot(nextSnapshot);
+        setCpuHistory((history) => pushHistory(history, nextSnapshot.nodes));
         setError(null);
         if (manual) {
           manualRefresh.current = false;
@@ -87,6 +92,7 @@ function ClusterPage({
   );
   const lastUpdated = snapshot ? new Date(snapshot.updated_at).toLocaleTimeString() : "--";
   const healthyCount = nodes.filter((node) => node.healthy).length;
+  const pool = poolUsage(nodes);
 
   // A disagreement is the one case where the matrix should not stay hidden:
   // it is the authoritative view of who sees whom differently.
@@ -134,6 +140,10 @@ function ClusterPage({
         live
         items={[
           { label: "Healthy", value: healthyCount, small: ` / ${nodes.length}` },
+          ...(pool.reporting > 0 ? [
+            { label: "Slots busy", value: pool.slotsInUse, small: ` / ${pool.slotsTotal}` },
+            ...(pool.cpuPercent !== null ? [{ label: "Pool CPU", value: `${pool.cpuPercent.toFixed(0)}%`, small: ` · ${pool.coresUsed.toFixed(1)} cores` }] : []),
+          ] : []),
           { label: "Last updated", value: <><Clock3 size={15} />{lastUpdated}</>, valueClassName: "time-value" },
         ]}
         extra={
@@ -165,6 +175,7 @@ function ClusterPage({
                   {node.healthy ? <Activity size={15} /> : <CircleX size={15} />}
                   {node.healthy ? "Healthy" : "Unreachable"}
                 </div>
+                {node.healthy && node.resources && <NodeResources usage={node.resources} cpuHistory={cpuHistory[node.id] ?? []} />}
                 {node.error && <div className="node-error"><CircleHelp size={14} />{node.error}</div>}
               </article>
             ))}

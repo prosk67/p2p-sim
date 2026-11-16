@@ -47,6 +47,12 @@ func (e *Executor) Acquire() (release func(), err error) {
 	}
 }
 
+// SlotsInUse is how many simulations are running right now.
+func (e *Executor) SlotsInUse() int { return len(e.slots) }
+
+// SlotsTotal is the configured concurrency limit.
+func (e *Executor) SlotsTotal() int { return cap(e.slots) }
+
 // Execute runs t. It never queues: when every slot is taken it returns
 // task.ErrBusy immediately so the caller can place the task elsewhere.
 func (e *Executor) Execute(ctx context.Context, t task.Task) (task.Result, error) {

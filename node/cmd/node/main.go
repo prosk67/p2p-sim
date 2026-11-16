@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -35,6 +36,7 @@ import (
 	"github.com/p2p-sim/node/internal/netbatch"
 	"github.com/p2p-sim/node/internal/pdes"
 	"github.com/p2p-sim/node/internal/peers"
+	"github.com/p2p-sim/node/internal/resources"
 	"github.com/p2p-sim/node/internal/sim"
 	"github.com/p2p-sim/node/internal/worker"
 )
@@ -140,6 +142,12 @@ func run(logger *slog.Logger) error {
 	// Live traffic streams run on this node and share its simulation slots.
 	streamer := &sim.Streamer{Python: cfg.PythonBin, Script: cfg.SimScript}
 	routes := http.NewServeMux()
+	usage := resources.NewSampler(nodeID, executor)
+	go usage.Run(ctx, 2*time.Second)
+	routes.HandleFunc("GET /resources", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(usage.Snapshot())
+	})
 	routes.Handle("GET /stream", api.StreamHandler(streamer, executor, nodeID, logger))
 	routes.Handle("/", pdes.NewHandlerWithOptions(attackHost, attackManager,
 		pdes.NewHandler(pdesHost, pdesManager,

@@ -2,6 +2,7 @@ package aggregate
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -50,5 +51,35 @@ func TestClusterAllDown(t *testing.T) {
 		if n.Healthy {
 			t.Fatalf("%s reported healthy", n.ID)
 		}
+	}
+}
+
+func TestClusterResources(t *testing.T) {
+	nodes, peers := testnode.Pool(t, 2)
+	nodes[1].SetNoResources(true)
+	snap := Cluster(context.Background(), nodeclient.New(time.Second), peers, 8)
+
+	var usage struct {
+		NodeID string `json:"node_id"`
+		Slots  struct {
+			InUse, Total int
+		} `json:"slots"`
+	}
+	if err := json.Unmarshal(snap.Nodes[0].Resources, &usage); err != nil {
+		t.Fatalf("resources %q: %v", snap.Nodes[0].Resources, err)
+	}
+	if usage.NodeID != "node-1" || usage.Slots.Total != 2 {
+		t.Fatalf("resources %+v", usage)
+	}
+	// A node without the endpoint is still healthy; it just has no figures.
+	old := snap.Nodes[1]
+	if !old.Healthy || old.Error != "" || old.Resources != nil {
+		t.Fatalf("node without /resources: %+v", old)
+	}
+	body, _ := json.Marshal(old)
+	var row map[string]any
+	_ = json.Unmarshal(body, &row)
+	if v, ok := row["resources"]; !ok || v != nil {
+		t.Fatalf("resources should serialize as null: %s", body)
 	}
 }

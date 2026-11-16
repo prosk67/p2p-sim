@@ -197,6 +197,12 @@ func (c *Client) Peers(ctx context.Context, base string) (PeerView, error) {
 	return v, err
 }
 
+// Resources returns the raw GET /resources body: the node's own CPU, memory,
+// network and simulation-slot usage.
+func (c *Client) Resources(ctx context.Context, base string) (json.RawMessage, error) {
+	return c.object(ctx, base+"/resources", 64<<10)
+}
+
 func (c *Client) Run(ctx context.Context, base string, req RunRequest) (RunStarted, error) {
 	var started RunStarted
 	payload, err := json.Marshal(req)
