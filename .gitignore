@@ -5,3 +5,11 @@ __pycache__/
 /bin/
 results/
 .archive/
+
+# Per-machine settings and tailnet addresses (see .env.example and
+# config/peers.tailnet.example.yaml). Never commit real values.
+.env
+.env.*
+!.env.example
+!web/.env.gateway
+config/peers.tailnet.yaml

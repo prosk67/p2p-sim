@@ -1,0 +1,15 @@
+# Peer list for a multi-machine pool over Tailscale; see
+# docs/tailscale-deployment.md. Copy to peers.tailnet.yaml (git-ignored) and
+# replace the addresses with each machine's `tailscale ip -4`. Every machine
+# and the gateway must use the same file.
+#
+# Use Tailscale IPs, not MagicDNS names: nodes run in containers, and Docker's
+# DNS usually does not forward to Tailscale's resolver. The port is the one
+# that machine publishes (node-1 8081, node-2 8082, node-3 8083).
+peers:
+  - id: node-1
+    url: http://100.64.0.1:8081
+  - id: node-2
+    url: http://100.64.0.2:8082
+  - id: node-3
+    url: http://100.64.0.3:8083

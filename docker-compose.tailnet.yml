@@ -1,0 +1,18 @@
+# Multi-machine deployment over Tailscale; see docs/tailscale-deployment.md.
+# Points the nodes at config/peers.tailnet.yaml (git-ignored, copied from
+# config/peers.tailnet.example.yaml). On each machine start only its own node:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.tailnet.yml up -d node-2
+#
+# and set NODE_BIND in that machine's .env. The gateway picks the same file
+# through GATEWAY_PEERS=peers.tailnet.yaml in .env.
+services:
+  node-1:
+    environment:
+      PEERS_CONFIG: /app/config/peers.tailnet.yaml
+  node-2:
+    environment:
+      PEERS_CONFIG: /app/config/peers.tailnet.yaml
+  node-3:
+    environment:
+      PEERS_CONFIG: /app/config/peers.tailnet.yaml

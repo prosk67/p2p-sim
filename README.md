@@ -239,6 +239,7 @@ set of nodes. These defaults limit exposure:
 - Use a private network or VPN.
 - Firewall port 8000 so only other pool members can reach it.
 - Every node trusts every other node's results.
+- Step-by-step setup over Tailscale: [`docs/tailscale-deployment.md`](docs/tailscale-deployment.md).
 
 Open findings and fixes are tracked in [`docs/security-audit.md`](docs/security-audit.md).
 Re-run the automated scans with `scripts/security-audit.sh`.
