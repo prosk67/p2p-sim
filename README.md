@@ -240,6 +240,9 @@ set of nodes. These defaults limit exposure:
 - Firewall port 8000 so only other pool members can reach it.
 - Every node trusts every other node's results.
 
+Open findings and fixes are tracked in [`docs/security-audit.md`](docs/security-audit.md).
+Re-run the automated scans with `scripts/security-audit.sh`.
+
 ## Known limitations
 
 - **Coordinator loss:** batch state lives only in the coordinating node's memory.
