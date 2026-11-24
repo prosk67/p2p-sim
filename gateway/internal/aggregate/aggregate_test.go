@@ -62,13 +62,14 @@ func TestClusterResources(t *testing.T) {
 	var usage struct {
 		NodeID string `json:"node_id"`
 		Slots  struct {
-			InUse, Total int
+			InUse int `json:"in_use"`
+			Total int `json:"total"`
 		} `json:"slots"`
 	}
 	if err := json.Unmarshal(snap.Nodes[0].Resources, &usage); err != nil {
 		t.Fatalf("resources %q: %v", snap.Nodes[0].Resources, err)
 	}
-	if usage.NodeID != "node-1" || usage.Slots.Total != 2 {
+	if usage.NodeID != "node-1" || usage.Slots.InUse != 1 || usage.Slots.Total != 2 {
 		t.Fatalf("resources %+v", usage)
 	}
 	// A node without the endpoint is still healthy; it just has no figures.

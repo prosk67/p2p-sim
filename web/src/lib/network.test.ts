@@ -138,6 +138,8 @@ describe("seek and playback speeds", () => {
   it("offers only speeds the live view can draw", () => {
     const sc = cloneScenario(SAMPLES[0].scenario); // peak 75 packets/s
     expect(playbackSpeeds(sc)).toEqual([0.25, 0.5, 1, 2]);
+    // An hour-long scenario below 1x would hold a node slot for over an hour.
+    expect(playbackSpeeds({ ...sc, duration: 3600 })).toEqual([1, 2]);
     sc.flows.forEach((f) => { f.rate = 1000; f.pattern = { type: "constant" }; });
     expect(playbackSpeeds(sc)).toEqual([0.05]);
   });

@@ -85,3 +85,40 @@ func TestExecuteBusyWhenSlotsFull(t *testing.T) {
 		t.Fatalf("after release: %v", err)
 	}
 }
+
+func TestStreamsLeaveASlotForBatches(t *testing.T) {
+	e := newExec(&fakeSim{}, 3)
+	streams := e.Streams()
+	r1, err := streams.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := streams.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := streams.Acquire(); !errors.Is(err, task.ErrBusy) {
+		t.Fatalf("third stream on a 3-slot node: %v, want ErrBusy", err)
+	}
+	if _, err := e.Execute(context.Background(), tk); err != nil {
+		t.Fatalf("a batch task must still fit: %v", err)
+	}
+	r1()
+	r1() // releasing twice must not free a second slot
+	if got := e.SlotsInUse(); got != 1 {
+		t.Fatalf("slots in use %d, want 1", got)
+	}
+	r2()
+	if got := e.SlotsInUse(); got != 0 {
+		t.Fatalf("slots in use %d, want 0", got)
+	}
+}
+
+func TestSingleSlotNodeStillStreams(t *testing.T) {
+	e := newExec(&fakeSim{}, 1)
+	release, err := e.Streams().Acquire()
+	if err != nil {
+		t.Fatalf("a 1-slot node must allow one stream: %v", err)
+	}
+	release()
+}

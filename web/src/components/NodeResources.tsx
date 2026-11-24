@@ -82,7 +82,7 @@ export function NodeResources({ usage, cpuHistory }: { usage: Usage; cpuHistory:
       )}
 
       {hostScope && (
-        <div className="usage-scope" title="This node is not running in a container, so CPU, memory and network are for the whole machine it runs on">
+        <div className="usage-scope" title="No container limits were found for this node, so CPU, memory and network describe the whole machine it runs on">
           Whole machine
         </div>
       )}

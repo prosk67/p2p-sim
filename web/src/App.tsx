@@ -6,7 +6,7 @@ import { NodeResources } from "./components/NodeResources";
 import { EmptyState, LoadingState, Notice, PageHeading, SectionTitle, StatStrip } from "./components/PagePrimitives";
 import { parseHash } from "./lib/format";
 import { startPolling } from "./lib/poll";
-import { poolUsage, pushHistory } from "./lib/resources";
+import { poolUsage, pushHistory, type CpuSeries } from "./lib/resources";
 import { AttackPage } from "./pages/AttackPage";
 import { LaunchPage } from "./pages/LaunchPage";
 import { LivePage } from "./pages/LivePage";
@@ -37,8 +37,10 @@ function ClusterPage({
   const [matrixOpen, setMatrixOpen] = useState(false);
   const manualRefresh = useRef(false);
   // Recent CPU readings per node, for the sparklines. Browser-only; lost on reload.
-  const [cpuHistory, setCpuHistory] = useState<Record<string, number[]>>({});
+  const [cpuHistory, setCpuHistory] = useState<Record<string, CpuSeries>>({});
   const client = useMemo(() => createApiClient(scenario), [scenario]);
+  // A different (mock) scenario is a different pool: start the lines afresh.
+  useEffect(() => setCpuHistory({}), [client]);
 
   useEffect(() => {
     let active = true;
@@ -142,7 +144,7 @@ function ClusterPage({
           { label: "Healthy", value: healthyCount, small: ` / ${nodes.length}` },
           ...(pool.reporting > 0 ? [
             { label: "Slots busy", value: pool.slotsInUse, small: ` / ${pool.slotsTotal}` },
-            ...(pool.cpuPercent !== null ? [{ label: "Pool CPU", value: `${pool.cpuPercent.toFixed(0)}%`, small: ` · ${pool.coresUsed.toFixed(1)} cores` }] : []),
+            ...(pool.cpuPercent !== null ? [{ label: "Pool CPU", value: `${pool.cpuPercent.toFixed(0)}%`, small: ` · ${pool.coresUsed.toFixed(1)} of ${Math.round(pool.cores)} cores` }] : []),
           ] : []),
           { label: "Last updated", value: <><Clock3 size={15} />{lastUpdated}</>, valueClassName: "time-value" },
         ]}
@@ -175,7 +177,7 @@ function ClusterPage({
                   {node.healthy ? <Activity size={15} /> : <CircleX size={15} />}
                   {node.healthy ? "Healthy" : "Unreachable"}
                 </div>
-                {node.healthy && node.resources && <NodeResources usage={node.resources} cpuHistory={cpuHistory[node.id] ?? []} />}
+                {node.healthy && node.resources && <NodeResources usage={node.resources} cpuHistory={cpuHistory[node.id]?.values ?? []} />}
                 {node.error && <div className="node-error"><CircleHelp size={14} />{node.error}</div>}
               </article>
             ))}

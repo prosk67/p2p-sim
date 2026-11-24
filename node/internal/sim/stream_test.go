@@ -28,6 +28,9 @@ func TestStreamParamsValidate(t *testing.T) {
 		{Seed: 1, Lambda: 0.8, Mu: 1, Duration: 4000, Speed: 10},
 		{Seed: 1, Lambda: 0.8, Mu: 1, Duration: 60, Speed: 0},
 		{Seed: 1, Lambda: 0.9, Mu: 1, Duration: 60, Speed: 500},
+		// 3600 simulated units at 0.5x would hold a slot for two hours.
+		{Seed: 1, Lambda: 0.8, Mu: 1, Duration: 3600, Speed: 0.5},
+		{Seed: 1, Lambda: 0.8, Mu: 1, Duration: 60, Speed: 1e-9},
 	}
 	for _, p := range bad {
 		if p.Validate() == nil {
@@ -95,5 +98,21 @@ func TestStreamStopsWhenViewerLeaves(t *testing.T) {
 	err = s.Stream(ctx, valid, func([]byte) error { return nil })
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v; want the caller's deadline", err)
+	}
+}
+
+func TestCheckStreamLength(t *testing.T) {
+	scenario := []byte(`{"duration": 600}`)
+	if err := CheckStreamLength(scenario, 1, 0); err != nil {
+		t.Fatalf("600 s at 1x: %v", err)
+	}
+	if err := CheckStreamLength(scenario, 0.1, 0); err == nil {
+		t.Fatal("6000 s of real time should be refused")
+	}
+	if err := CheckStreamLength(scenario, 0.1, 300); err != nil {
+		t.Fatalf("starting at 300 leaves 3000 s: %v", err)
+	}
+	if err := CheckStreamLength([]byte(`{}`), 1, 0); err == nil {
+		t.Fatal("missing duration should be refused")
 	}
 }

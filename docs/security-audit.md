@@ -4,7 +4,7 @@ The project's current security audit: code review, live probes and automated
 scans in one place. Re-run the scans with `scripts/security-audit.sh` (see
 §7). The earlier audit, `2026-11-04-security-audit.md`, is kept as history.
 
-- **Last updated:** 2026-11-16
+- **Last updated:** 2026-11-24 (fixes applied; see the Status column and §5)
 - **Scope:** whole repository at `61939e9` (including the pool resource-usage
   change: node `GET /resources`, `resources` in `/api/cluster`)
 - **Method:**
@@ -31,29 +31,36 @@ does not check which standard-library functions the code actually calls.
 There is no critical issue in the application code. Nothing is exploitable
 from the network in the default loopback-only setup.
 
-There are three real exposures:
+The 2026-11-16 review found three real exposures. The 2026-11-24 fixes close
+or narrow all three:
 
-- **The browser on the same machine (M-1, M-2).** Any website the user visits
-  can start runs and, through DNS rebinding, read the API.
-- **Any deployment beyond loopback (M-3).** The system has no usable
-  authentication.
-- **Stale base images (D-2).** The web image has one critical and 56 high CVEs,
-  all fixed by a rebuild.
+- **The browser on the same machine (M-1, M-2).** Any website the user visited
+  could start runs and, through DNS rebinding, read the API. **Fixed:** both
+  servers now check `Host`, refuse cross-site browser requests (GET included)
+  and require JSON bodies on the gateway.
+- **Any deployment beyond loopback (M-3).** There was no usable
+  authentication. **Narrowed:** an optional pool token now protects every node
+  endpoint except `/health`. The GUI still cannot send `GATEWAY_TOKEN`, so the
+  gateway relies on network placement (loopback or Tailscale).
+- **Stale base images (D-2).** **Partly fixed:** the node image now applies
+  Debian updates and drops unused build tooling, and the Go toolchain is
+  pinned. The web (mock) image just needs a rebuild on a fresh base.
 
-| ID | Severity | Finding |
-|----|----------|---------|
-| M-1 | Medium | Any website can start runs on the gateway and on nodes (cross-site POST) |
-| M-2 | Medium | No `Host` check: DNS rebinding gives a hostile page full API access |
-| M-3 | Medium (off loopback) | No usable authentication once ports leave loopback |
-| L-1 | Low | Live streams can hold every simulation slot indefinitely |
-| L-2 | Low | `/api/cluster` fans out to N² + 2N node requests, uncached |
-| L-3 | Low | `GET /resources` discloses machine size and load |
-| L-4 | Low | Partition sessions from a peer are bounded only by slots |
-| D-1 | High (dev server only) | Vite 8.3.2 advisories |
-| D-2 | Critical/High (images) | Outdated packages in the web and node base images |
-| D-3 | Low | 173 bandit findings, all LOW and accepted |
-| D-4 | Info | hadolint: 3 cosmetic Dockerfile findings |
-| I-1 | Info | `.gitignore` has no `.env*` rule; base images use floating tags; `node/go.mod` declares `go 1.22` |
+| ID | Severity | Finding | Status |
+|----|----------|---------|--------|
+| M-1 | Medium | Any website can start runs on the gateway and on nodes (cross-site requests, including GET streams) | **Fixed** 2026-11-24 |
+| M-2 | Medium | No `Host` check: DNS rebinding gives a hostile page full API access | **Fixed** 2026-11-24 |
+| M-3 | Medium (off loopback) | No usable authentication once ports leave loopback | **Partly fixed**: pool token for nodes; GUI token open |
+| M-4 | Medium (off loopback) | Anyone reaching a node can kill or inject records into a running PDES/attack partition | **Fixed** when `POOL_TOKEN` is set; run ids now unguessable |
+| L-1 | Low | Live streams can hold every simulation slot indefinitely | **Fixed** 2026-11-24 |
+| L-2 | Low | `/api/cluster` fans out to N² + 2N node requests, uncached | **Fixed** (1 s cache) |
+| L-3 | Low | `GET /resources` discloses machine size and load | Behind the pool token when set |
+| L-4 | Low | Partition sessions from a peer are bounded only by slots | Open (accepted in a trusted pool) |
+| D-1 | High (dev server only) | Vite 8.3.2 advisories | **Fixed**: Vite 8.3.8, `npm audit` clean |
+| D-2 | Critical/High (images) | Outdated packages in the web and node base images | **Partly fixed** (node image); web image: rebuild |
+| D-3 | Low | 173 bandit findings, all LOW and accepted | Accepted |
+| D-4 | Info | hadolint: 3 cosmetic Dockerfile findings | **Fixed** (DL3025); DL3066 accepted |
+| I-1 | Info | `.gitignore` has no `.env*` rule; base images use floating tags; `node/go.mod` declares `go 1.22` | **Mostly fixed**: `.env*` ignored, `go 1.27`, `golang:1.27.4` pinned; Python/nginx/node tags still float |
 
 | Area | Result |
 |---|---|
@@ -213,6 +220,27 @@ There are no MEDIUM or HIGH findings. The script runs bandit with
 - DL3066 (non-numeric user) in `web/Dockerfile`. This is fine: the base image
   provides the user.
 
+### M-4 Partition sessions can be tampered with (added 2026-11-24)
+The partition endpoints on each node (`/partition/{run}/step`, `/finish`,
+`DELETE`, and the `/attack/...` equivalents) did not check who was calling.
+Anyone who could reach a node port and knew a run id could:
+
+- delete or finish a partition, which fails the run;
+- inject fake packet arrivals into a step, which silently changes the merged
+  result. Only runs with the baseline comparison enabled would notice.
+
+Run ids were predictable (prefix, node and timestamp) and are listed by
+`/api/runs`.
+
+**Fixed:**
+
+- run ids now end in a random suffix, so they cannot be guessed;
+- with `POOL_TOKEN` set, every node endpoint except `GET /health` requires
+  the pool token, which peers and the gateway send automatically.
+
+Without a token this stays as exposed as M-3: fine on loopback or behind the
+Tailscale access policy, not on an open network.
+
 ## 4. Confirmed still good
 - **No shell anywhere.** Every subprocess is `exec.Command(python, script, …)`
   with numeric argv, and scenarios go on stdin.
@@ -236,23 +264,43 @@ There are no MEDIUM or HIGH findings. The script runs bandit with
 
 ## 5. Remediation checklist
 
-1. [ ] M-1 and M-2: one small middleware in each server (JSON content type,
-       same-site check, `Host` allow-list).
-2. [ ] D-1: bump `vite` in `web/`, rebuild.
-3. [ ] D-2: refresh the web base image; refresh or `apt-get upgrade` the node
-       base; re-scan.
-4. [ ] L-1: wall-clock cap on live streams. L-2: cache the cluster snapshot.
-5. [ ] M-3, before any deployment off loopback: peer token, GUI-sent gateway
-       token, fail fast on an empty token; document it in the README.
-6. [ ] I-1: add `.env*` (except `.env.gateway`) to `.gitignore`; pin base
-       images; raise `node/go.mod` to `go 1.27`.
-7. [ ] Optional: hadolint DL3025 exec-form fixes; distroless node runtime.
+Done on 2026-11-24:
+
+1. [x] M-1, M-2: `Host` allow-list and cross-site refusal in both servers
+       (`node/internal/guard`, gateway `guard` middleware); JSON-only POSTs on
+       the gateway. Cross-site GETs (`/api/stream`, node `/stream`) are covered.
+2. [x] D-1: Vite 8.3.8; `npm audit` reports 0 vulnerabilities.
+3. [x] L-1: live streams capped at one hour of real time (`duration/speed`),
+       and at most `max_concurrent_tasks - 1` streams per node (minimum one),
+       so batches always have a slot. The GUI offers only speeds within the cap.
+4. [x] L-2: the gateway caches the cluster view for 1 s.
+5. [x] M-4 and the node half of M-3: optional `POOL_TOKEN`; random run ids.
+6. [x] D-2 (node image): `apt-get upgrade` at build, setuptools/wheel removed,
+       `golang:1.27.4` builder. D-4: exec-form `HEALTHCHECK` (DL3025).
+7. [x] I-1: `.env*` ignored, `node/go.mod` raised to `go 1.27`.
+
+Still open:
+
+1. [ ] M-3 (gateway): let the GUI send `GATEWAY_TOKEN` (needs a sign-in step),
+       and refuse to start on a non-loopback address with an empty token.
+       Until then keep the gateway on loopback or behind `tailscale serve`.
+2. [ ] D-2 (web image): rebuild on a fresh `nginx-unprivileged` base and
+       re-scan; consider pinning Python, nginx and Node base tags.
+3. [ ] L-4: global cap on open partition sessions if nodes are ever exposed.
+4. [ ] Re-run `scripts/security-audit.sh` to confirm the image findings
+       (not re-scanned after these changes).
+5. [ ] Optional: distroless node runtime.
 
 ## 6. History
 - **2026-11-04:** `2026-11-04-security-audit.md` at `c0c8b7f`.
 - **2026-11-16:** this document. It merges a code and runtime review with an
   automated scan pass. The scan pass's generated summary is
   `security-audit-summary-2026-11-16.md`.
+- **2026-11-24:** code review of the 2026-11-08 to 2026-11-19 changes found
+  M-4 and widened M-1 to GET streams. M-1, M-2, M-4, L-1, L-2, D-1, D-4 fixed;
+  M-3, D-2 and I-1 narrowed. Verified live on the Compose stack with a pool
+  token: guards return 421/403/415/401 as intended, and an M/M/1 batch and a
+  3-partition PDES run (results identical to baseline) completed.
 
 ## 7. Re-running the scans
 

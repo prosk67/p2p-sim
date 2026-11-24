@@ -66,6 +66,20 @@ type Client struct {
 	http    *http.Client
 	stream  *http.Client // no overall deadline: live streams last minutes
 	timeout time.Duration
+	token   string // pool token sent to nodes; empty sends none
+}
+
+// WithPoolToken makes every node call carry "Authorization: Bearer <token>",
+// matching the nodes' POOL_TOKEN.
+func (c *Client) WithPoolToken(token string) *Client {
+	c.token = token
+	return c
+}
+
+func (c *Client) authorize(req *http.Request) {
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 }
 
 func New(timeout time.Duration) *Client {
@@ -115,6 +129,7 @@ func (c *Client) openSSE(ctx context.Context, method, target string, payload []b
 		return nil, &Error{Kind: KindUnreachable, Message: err.Error(), Err: err}
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	c.authorize(req)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -367,6 +382,7 @@ func (c *Client) doTimeoutLimit(ctx context.Context, method, target string, payl
 		return nil, &Error{Kind: KindUnreachable, Message: err.Error(), Err: err}
 	}
 	req.Header.Set("Accept", "application/json")
+	c.authorize(req)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

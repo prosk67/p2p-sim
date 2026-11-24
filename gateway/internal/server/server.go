@@ -4,6 +4,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -11,11 +12,14 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/p2p-sim/gateway/internal/aggregate"
@@ -42,14 +46,25 @@ type Options struct {
 	Runs     *runs.Manager
 	Defaults config.RunDefaults
 	Token    string // bearer token for /api/*; empty disables auth
-	Version  string
-	Static   fs.FS // built GUI; may lack index.html
-	Log      *slog.Logger
+	// AllowedHosts are extra DNS names the gateway may be reached by. IPs,
+	// localhost and *.ts.net are always allowed; see hostAllowed.
+	AllowedHosts []string
+	Version      string
+	Static       fs.FS // built GUI; may lack index.html
+	Log          *slog.Logger
 }
 
 type Server struct {
 	opts Options
+
+	// The cluster view is cached briefly: each probe fans out to every node,
+	// and each node's /peers probes every peer in turn.
+	clusterMu   sync.Mutex
+	clusterSnap aggregate.Snapshot
+	clusterAt   time.Time
 }
+
+const clusterCacheFor = time.Second
 
 // Handler returns the complete gateway handler with middleware applied.
 func Handler(opts Options) http.Handler {
@@ -72,7 +87,7 @@ func Handler(opts Options) http.Handler {
 		writeError(w, http.StatusNotFound, "no such API endpoint")
 	})
 	mux.Handle("/", s.static())
-	return s.recover(s.logRequests(securityHeaders(s.auth(mux))))
+	return s.recover(s.logRequests(securityHeaders(s.guard(s.auth(mux)))))
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +105,14 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cluster(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, aggregate.Cluster(r.Context(), s.opts.Nodes, s.opts.Peers.Peers(), clusterFanout))
+	s.clusterMu.Lock()
+	defer s.clusterMu.Unlock()
+	if s.clusterAt.IsZero() || time.Since(s.clusterAt) >= clusterCacheFor {
+		// Not tied to this caller: others may be waiting for the same probe.
+		s.clusterSnap = aggregate.Cluster(context.WithoutCancel(r.Context()), s.opts.Nodes, s.opts.Peers.Peers(), clusterFanout)
+		s.clusterAt = time.Now()
+	}
+	writeJSON(w, http.StatusOK, s.clusterSnap)
 }
 
 func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
@@ -382,6 +404,75 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// guard refuses requests that a browser sent on behalf of another site, and
+// requests addressed to a DNS name the gateway does not know.
+//
+//   - Host: IP literals, localhost, *.ts.net and AllowedHosts only (421
+//     otherwise). A page that rebinds its own domain to 127.0.0.1 still sends
+//     that domain as Host, so DNS rebinding gets nowhere.
+//   - /api/*: a request marked cross-site or same-site by Sec-Fetch-Site, or
+//     with a foreign Origin, is refused (403). This covers GET /api/stream,
+//     which starts a simulation and could otherwise be triggered by an <img>.
+//   - POST /api/*: the body must be application/json (415), which a plain
+//     cross-site form cannot send.
+func (s *Server) guard(next http.Handler) http.Handler {
+	allowed := map[string]bool{}
+	for _, h := range s.opts.AllowedHosts {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			allowed[h] = true
+		}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !hostAllowed(r.Host, allowed) {
+			writeError(w, http.StatusMisdirectedRequest, "unknown host "+r.Host+"; add it to GATEWAY_ALLOWED_HOSTS")
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			if crossSite(r) {
+				writeError(w, http.StatusForbidden, "cross-site requests are not allowed")
+				return
+			}
+			if r.Method == http.MethodPost {
+				if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+					writeError(w, http.StatusUnsupportedMediaType, "request body must be application/json")
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func hostAllowed(hostport string, extra map[string]bool) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
+	switch {
+	case host == "":
+		return false
+	case net.ParseIP(host) != nil, host == "localhost", strings.HasSuffix(host, ".localhost"),
+		strings.HasSuffix(host, ".ts.net"):
+		return true
+	}
+	return extra[host]
+}
+
+func crossSite(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+	default:
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	return err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host)
 }
 
 func securityHeaders(next http.Handler) http.Handler {

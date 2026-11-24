@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/p2p-sim/node/internal/task"
@@ -45,6 +46,49 @@ func (e *Executor) Acquire() (release func(), err error) {
 	default:
 		return nil, task.ErrBusy
 	}
+}
+
+// Streams returns the acquirer for live streams. Streams hold a slot for as
+// long as a viewer watches, so they may take at most total-1 slots (at least
+// one): batch work always has somewhere to run.
+func (e *Executor) Streams() *StreamSlots {
+	limit := cap(e.slots) - 1
+	if limit < 1 {
+		limit = 1
+	}
+	return &StreamSlots{exec: e, limit: limit}
+}
+
+// StreamSlots caps how many simulation slots live streams hold at once.
+type StreamSlots struct {
+	exec  *Executor
+	limit int
+	mu    sync.Mutex
+	open  int
+}
+
+// Acquire takes a slot for one stream, or returns task.ErrBusy when the
+// stream limit or every slot is taken.
+func (s *StreamSlots) Acquire() (release func(), err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.open >= s.limit {
+		return nil, task.ErrBusy
+	}
+	releaseSlot, err := s.exec.Acquire()
+	if err != nil {
+		return nil, err
+	}
+	s.open++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			releaseSlot()
+			s.mu.Lock()
+			s.open--
+			s.mu.Unlock()
+		})
+	}, nil
 }
 
 // SlotsInUse is how many simulations are running right now.

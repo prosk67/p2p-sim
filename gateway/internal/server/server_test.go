@@ -68,6 +68,10 @@ func (e *env) do(method, target, body string, header ...string) *httptest.Respon
 		reader = strings.NewReader(body)
 	}
 	req := httptest.NewRequest(method, target, reader)
+	req.Host = "127.0.0.1:8090" // what a browser on this machine sends
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	for i := 0; i+1 < len(header); i += 2 {
 		req.Header.Set(header[i], header[i+1])
 	}
@@ -347,5 +351,61 @@ func TestNetStreamRelay(t *testing.T) {
 	}
 	if rec := e.do("POST", "/api/netstream", `{"node":"node-1","speed":1}`); rec.Code != 400 {
 		t.Fatalf("missing scenario passes through the node's 400, got %d", rec.Code)
+	}
+}
+
+func TestGuardRefusesForeignHostsAndCrossSiteRequests(t *testing.T) {
+	e := setup(t, "", bundle)
+	run := `{"coordinator":"node-1","replications":10}`
+	cases := []struct {
+		name   string
+		method string
+		target string
+		body   string
+		header []string
+		host   string
+		want   int
+	}{
+		{"rebound domain", "GET", "/api/cluster", "", nil, "evil.example:8090", 421},
+		{"rebound domain, GUI page", "GET", "/", "", nil, "evil.example", 421},
+		{"tailnet name", "GET", "/api/cluster", "", nil, "lab-pc-1.tail1234.ts.net", 200},
+		{"tailnet IP", "GET", "/api/cluster", "", nil, "100.64.0.1:8090", 200},
+		{"cross-site form post", "POST", "/api/runs", run, []string{"Content-Type", "text/plain", "Sec-Fetch-Site", "cross-site", "Origin", "http://evil.example"}, "", 403},
+		{"old browser, foreign origin", "POST", "/api/runs", run, []string{"Origin", "http://evil.example"}, "", 403},
+		{"cross-site <img> stream", "GET", "/api/stream?node=node-1&lambda=0.8&mu=1", "", []string{"Sec-Fetch-Site", "cross-site"}, "", 403},
+		{"text/plain post", "POST", "/api/runs", run, []string{"Content-Type", "text/plain"}, "", 415},
+		{"same-origin GUI", "GET", "/api/cluster", "", []string{"Sec-Fetch-Site", "same-origin", "Origin", "http://127.0.0.1:8090"}, "", 200},
+	}
+	for _, c := range cases {
+		header := c.header
+		rec := func() *httptest.ResponseRecorder {
+			var reader io.Reader
+			if c.body != "" {
+				reader = strings.NewReader(c.body)
+			}
+			req := httptest.NewRequest(c.method, c.target, reader)
+			req.Host = "127.0.0.1:8090"
+			if c.host != "" {
+				req.Host = c.host
+			}
+			if c.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			for i := 0; i+1 < len(header); i += 2 {
+				req.Header.Set(header[i], header[i+1])
+			}
+			rec := httptest.NewRecorder()
+			e.handler.ServeHTTP(rec, req)
+			return rec
+		}()
+		if rec.Code != c.want {
+			t.Errorf("%s: got %d %s; want %d", c.name, rec.Code, rec.Body, c.want)
+		}
+	}
+}
+
+func TestAllowedHostsOption(t *testing.T) {
+	if !hostAllowed("gateway.lab:8090", map[string]bool{"gateway.lab": true}) || hostAllowed("gateway.lab.evil.example", map[string]bool{"gateway.lab": true}) {
+		t.Fatal("allowed hosts must match exactly")
 	}
 }

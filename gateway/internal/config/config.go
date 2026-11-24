@@ -25,6 +25,8 @@ type Settings struct {
 	NodeConfigPath string
 	DBPath         string
 	Token          string
+	PoolToken      string   // POOL_TOKEN: sent to nodes that require it
+	AllowedHosts   []string // GATEWAY_ALLOWED_HOSTS: extra DNS names for Host
 	NodeTimeout    time.Duration
 	HistoryLimit   int
 	LogLevel       slog.Level
@@ -57,6 +59,12 @@ func LoadSettings(getenv func(string) string) (Settings, error) {
 	str("NODE_CONFIG", &s.NodeConfigPath)
 	str("GATEWAY_DB", &s.DBPath)
 	s.Token = getenv("GATEWAY_TOKEN")
+	s.PoolToken = getenv("POOL_TOKEN")
+	for _, h := range strings.Split(getenv("GATEWAY_ALLOWED_HOSTS"), ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			s.AllowedHosts = append(s.AllowedHosts, h)
+		}
+	}
 
 	var errs []error
 	duration := func(key string, dst *time.Duration) {

@@ -32,6 +32,11 @@ services:
       # Set to require "Authorization: Bearer <token>" on /api/*. The GUI
       # cannot send a token yet, so leave it empty when using the GUI.
       GATEWAY_TOKEN: "${GATEWAY_TOKEN:-}"
+      # Sent to the nodes; must match their POOL_TOKEN.
+      POOL_TOKEN: "${POOL_TOKEN:-}"
+      # Extra DNS names the GUI may be opened by (IPs, localhost and
+      # *.ts.net are always allowed), e.g. "gateway.lab".
+      GATEWAY_ALLOWED_HOSTS: "${GATEWAY_ALLOWED_HOSTS:-}"
     volumes:
       - ./config:/app/config:ro
       - gateway-data:/data

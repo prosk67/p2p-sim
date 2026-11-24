@@ -218,8 +218,18 @@ python3 sim/simulate.py --seed 42007 --lam 0.8 --mu 1.0 --sim-time 10000 --warmu
 
 ## Security
 
-There is **no authentication and no TLS**, because the design assumes a trusted
-set of nodes. These defaults limit exposure:
+There is **no TLS** and authentication is opt-in, because the design assumes a
+trusted set of nodes. These defaults limit exposure:
+
+- **Pool token:** set `POOL_TOKEN` (same value for every node and the gateway)
+  and nodes refuse every call except `GET /health` without it. Use it for any
+  pool beyond one machine.
+- **Browser protection:** both the gateway and the nodes refuse unknown `Host`
+  names (DNS rebinding) and cross-site browser requests, so a website you visit
+  cannot start runs. Extra names can be allowed with `GATEWAY_ALLOWED_HOSTS` /
+  `NODE_ALLOWED_HOSTS`.
+- **Live streams:** at most one hour of real time each, and they always leave
+  one simulation slot free for batches.
 
 - **Network:** Compose publishes node ports on `127.0.0.1` only. Set `NODE_BIND=0.0.0.0`
   only on a trusted LAN or VPN. Because every node exposes both `/run` and `/task`,

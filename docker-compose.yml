@@ -26,6 +26,12 @@ x-node: &node
   environment: &node-env
     PEERS_CONFIG: /app/config/peers.yaml
     NODE_CONFIG: /app/config/node.yaml
+    # Shared secret required on node calls (except /health) when set; the
+    # gateway sends the same value. Set it for any pool beyond one machine.
+    POOL_TOKEN: "${POOL_TOKEN:-}"
+    # Extra DNS names the nodes may be reached by (peers.yaml hosts, IPs,
+    # localhost and *.ts.net are always allowed).
+    NODE_ALLOWED_HOSTS: "${NODE_ALLOWED_HOSTS:-}"
 
 services:
   # The API is unauthenticated, so host ports are published on loopback only

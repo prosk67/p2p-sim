@@ -104,7 +104,14 @@ ufw.
 ```sh
 # .env on lab-pc-2
 NODE_BIND=100.64.0.2
+POOL_TOKEN=<the same secret on every machine>
 ```
+
+**Set a pool token.** Generate it once (`openssl rand -hex 32`) and put the
+same value in every machine's `.env`, including the gateway's. Nodes then
+refuse every call except `GET /health` without it. Without a token, anything
+on the tailnet that the access policy lets through can start work, and could
+tamper with a running PDES or attack run.
 
 ## 5. Start the nodes
 
@@ -186,7 +193,9 @@ tailnet still uses the default allow-all rule, keep the rules you rely on
 ## 8. Verify
 
 1. **Host to host:** from any machine, `curl http://100.64.0.2:8082/health`
-   returns `{"status":"ok","node_id":"node-2",...}`.
+   returns `{"status":"ok","node_id":"node-2",...}`. With a pool token set,
+   `curl http://100.64.0.2:8082/status` returns `401`, and
+   `curl -H "Authorization: Bearer $POOL_TOKEN" ...` does not.
 2. **Container to remote node.** This is the path batches actually use:
    ```sh
    docker exec node-1 python3 -c "import urllib.request as u; print(u.urlopen('http://100.64.0.2:8082/health').read())"
@@ -219,3 +228,5 @@ Nodes do not reload the peer list while running.
 | PDES slower than one node | Relayed (DERP) connection; check `tailscale ping` |
 | PDES or attack run fails its identical-result check | Machines with different CPU types or images; use the same image everywhere |
 | Gateway shows a node as down after its laptop slept | Expected; the node's batches re-dispatch elsewhere, and it rejoins when awake |
+| Cluster page says `node returned 401: missing or invalid pool token` | `POOL_TOKEN` differs between the gateway and that node, or is missing on one of them |
+| A node or the GUI answers `421 unknown host` | You used a DNS name that is not a Tailscale (`*.ts.net`) name, IP or peer-list host; add it to `NODE_ALLOWED_HOSTS` / `GATEWAY_ALLOWED_HOSTS` |

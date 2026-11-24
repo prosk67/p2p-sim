@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ClusterNode, NodeResources } from "../api/types";
-import { formatBytes, formatRate, HISTORY_LENGTH, loadTone, poolUsage, pushHistory, sparklinePoints } from "./resources";
+import { formatBytes, formatRate, HISTORY_LENGTH, loadTone, poolUsage, pushHistory, sparklinePoints, type CpuSeries } from "./resources";
 
 const report = (overrides: Partial<NodeResources> = {}): NodeResources => ({
   node_id: "node-1",
@@ -35,20 +35,46 @@ describe("formatting", () => {
 });
 
 describe("poolUsage", () => {
-  it("sums slots and CPU over reporting container nodes", () => {
-    const usage = poolUsage([
-      node("node-1", report()),
-      node("node-2", report({ slots: { in_use: 2, total: 2 }, cpu: { cores_used: 3, cores: 4, percent: 75 } })),
-      node("node-3", null),
-      node("node-4", report(), false),
-    ]);
-    expect(usage).toMatchObject({ reporting: 2, slotsInUse: 3, slotsTotal: 4, coresUsed: 4, cores: 8, cpuPercent: 50 });
+  it("counts containers on one machine against that machine's cores", () => {
+    // The Compose demo: 3 unlimited containers on a 16-core host, 4 cores busy each.
+    const busy = (id: string) => node(id, report({
+      node_id: id, host_id: "h1", host_cores: 16, cpu: { cores_used: 4, cores: 16, percent: 25 },
+    }));
+    const usage = poolUsage([busy("node-1"), busy("node-2"), busy("node-3")]);
+    expect(usage).toMatchObject({ reporting: 3, machines: 1, coresUsed: 12, cores: 16, cpuPercent: 75 });
   });
 
-  it("does not add up whole-machine figures from several host-scope nodes", () => {
-    const usage = poolUsage([node("node-1", report({ scope: "host" })), node("node-2", report({ scope: "host" }))]);
-    expect(usage.cpuPercent).toBeNull();
-    expect(usage.slotsTotal).toBe(4);
+  it("uses total cores over total capacity across separate machines", () => {
+    // A 4-core laptop flat out plus an idle 16-core PC is 20% of the pool, not 50%.
+    const usage = poolUsage([
+      node("laptop", report({ node_id: "laptop", host_id: "a", host_cores: 4, cpu: { cores_used: 4, cores: 4, percent: 100 } })),
+      node("pc", report({ node_id: "pc", host_id: "b", host_cores: 16, cpu: { cores_used: 0, cores: 16, percent: 0 } })),
+    ]);
+    expect(usage).toMatchObject({ machines: 2, coresUsed: 4, cores: 20, cpuPercent: 20 });
+  });
+
+  it("caps capacity at the containers' CPU limits when they are smaller", () => {
+    const limited = (id: string) => node(id, report({
+      node_id: id, host_id: "h1", host_cores: 16, cpu: { cores_used: 1, cores: 2, percent: 50 },
+    }));
+    expect(poolUsage([limited("node-1"), limited("node-2")])).toMatchObject({ coresUsed: 2, cores: 4, cpuPercent: 50 });
+  });
+
+  it("takes whole-machine figures once per machine", () => {
+    const host = (id: string) => node(id, report({
+      node_id: id, scope: "host", host_id: "h1", host_cores: 8, pids: null, cpu: { cores_used: 2, cores: 8, percent: 25 },
+    }));
+    expect(poolUsage([host("node-1"), host("node-2")])).toMatchObject({ machines: 1, coresUsed: 2, cores: 8, cpuPercent: 25 });
+  });
+
+  it("sums slots, skips down or silent nodes, and treats nodes without a host id separately", () => {
+    const usage = poolUsage([
+      node("node-1", report()),
+      node("node-2", report({ node_id: "node-2", slots: { in_use: 2, total: 2 }, cpu: { cores_used: 3, cores: 4, percent: 75 } })),
+      node("node-3", null),
+      node("node-4", report({ node_id: "node-4" }), false),
+    ]);
+    expect(usage).toMatchObject({ reporting: 2, machines: 2, slotsInUse: 3, slotsTotal: 4, coresUsed: 4, cores: 8, cpuPercent: 50 });
   });
 
   it("has no CPU figure before the first rate arrives", () => {
@@ -57,12 +83,17 @@ describe("poolUsage", () => {
 });
 
 describe("pushHistory", () => {
-  it("appends, caps, resets on a gap and forgets removed nodes", () => {
-    let history: Record<string, number[]> = { gone: [1] };
-    for (let i = 0; i < HISTORY_LENGTH + 5; i += 1) history = pushHistory(history, [node("node-1", report())]);
-    expect(history["node-1"]).toHaveLength(HISTORY_LENGTH);
+  it("adds a point only for a new sample, caps the length, resets on a gap and forgets removed nodes", () => {
+    let history: Record<string, CpuSeries> = { gone: { last: "x", values: [1] } };
+    for (let i = 0; i < HISTORY_LENGTH + 5; i += 1) {
+      history = pushHistory(history, [node("node-1", report({ sampled_at: `t${i}` }))]);
+    }
+    expect(history["node-1"].values).toHaveLength(HISTORY_LENGTH);
     expect(history.gone).toBeUndefined();
-    expect(pushHistory(history, [node("node-1", null)])["node-1"]).toEqual([]);
+    // Refreshing again before the node takes a new sample adds nothing.
+    const again = pushHistory(history, [node("node-1", report({ sampled_at: `t${HISTORY_LENGTH + 4}` }))]);
+    expect(again["node-1"]).toBe(history["node-1"]);
+    expect(pushHistory(history, [node("node-1", null)])["node-1"].values).toEqual([]);
   });
 });
 

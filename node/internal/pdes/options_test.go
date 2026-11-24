@@ -55,6 +55,9 @@ func TestOptionsNormalizePrefixes(t *testing.T) {
 	if empty != defaults {
 		t.Fatalf("empty options = %+v; want %+v", empty, defaults)
 	}
+	if a, b := makeRunID("pdes", "node-1", time.Unix(0, 0)), makeRunID("pdes", "node-1", time.Unix(0, 0)); a == b {
+		t.Fatalf("run ids must not be guessable from the time alone: %s", a)
+	}
 	if got := makeRunID("attack", "node-1", time.Unix(0, 0)); !strings.HasPrefix(got, "attack-node-1-") {
 		t.Fatalf("run id = %q", got)
 	}

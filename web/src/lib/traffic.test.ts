@@ -21,6 +21,8 @@ describe("validateTraffic", () => {
     expect(validateTraffic({ ...params, speed: 500 })).toHaveLength(1);
     expect(validateTraffic({ ...params, duration: 5000 })).toHaveLength(1);
     expect(validateTraffic({ ...params, seed: -1 })).toHaveLength(1);
+    // More than an hour of real time: 3600 simulated units at 0.5x.
+    expect(validateTraffic({ ...params, lambda: 0.8, duration: 3600, speed: 0.5 })).toHaveLength(1);
   });
 });
 

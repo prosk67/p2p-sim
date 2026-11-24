@@ -53,6 +53,10 @@ export interface GatewayConfig {
 export interface NodeResources {
   node_id: string;
   scope: "container" | "host";
+  /** Same for every node on one machine; absent from older nodes. */
+  host_id?: string;
+  /** CPUs on the node's machine, whatever the node's own limit. */
+  host_cores?: number;
   slots: { in_use: number; total: number };
   cpu: { cores_used: number; cores: number; percent: number } | null;
   memory: { used_bytes: number; limit_bytes: number } | null;

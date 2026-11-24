@@ -4,7 +4,7 @@
 # ---- Stage 1: build the Go binary ----
 # Use a Go release that still receives security fixes: net/http and crypto
 # are compiled into the binary, so an EOL toolchain ships known CVEs.
-FROM golang:1.27 AS builder
+FROM golang:1.27.4 AS builder
 WORKDIR /src
 COPY node/go.mod node/go.sum ./
 RUN go mod download
@@ -14,8 +14,15 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /node-bin ./
 # ---- Stage 2: Python runtime + Go binary ----
 FROM python:3.11-slim
 WORKDIR /app
+# Take the Debian security updates released since the base image was built.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
 COPY sim/requirements.txt .
+# setuptools and wheel are build tooling the node never uses at runtime;
+# removing them drops their CVEs (including vendored jaraco.context).
 RUN pip install --no-cache-dir -r requirements.txt \
+ && pip uninstall -y setuptools wheel \
  && useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin app
 # Code stays root-owned and read-only to the runtime user.
 COPY sim/simulate.py sim/netsim.py sim/attacksim.py ./sim/
@@ -27,5 +34,5 @@ ENV PEERS_CONFIG=/app/config/peers.yaml \
 USER 10001:10001
 EXPOSE 8000
 HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=5 \
-    CMD python3 -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"
+    CMD ["python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"]
 ENTRYPOINT ["/app/node-bin"]

@@ -33,6 +33,7 @@ import (
 	"github.com/p2p-sim/node/internal/batch"
 	"github.com/p2p-sim/node/internal/config"
 	"github.com/p2p-sim/node/internal/dispatch"
+	"github.com/p2p-sim/node/internal/guard"
 	"github.com/p2p-sim/node/internal/netbatch"
 	"github.com/p2p-sim/node/internal/pdes"
 	"github.com/p2p-sim/node/internal/peers"
@@ -96,11 +97,17 @@ func run(logger *slog.Logger) error {
 	}
 	executor := worker.New(runner, nodeID, cfg.MaxConcurrentTasks, logger)
 
+	// POOL_TOKEN, when set, is required on every request but GET /health and
+	// sent on every call this node makes to its peers.
+	poolToken := os.Getenv("POOL_TOKEN")
+	remote := dispatch.NewHTTPClient(cfg.RequestTimeout, cfg.HealthTimeout)
+	remote.HTTP.Transport = guard.Transport{Token: poolToken}
+
 	// Coordinating side: tasks for this node run in-process, others over HTTP.
 	client := dispatch.RoutingClient{
 		SelfID: nodeID,
 		Local:  dispatch.LocalClient{Exec: executor},
-		Remote: dispatch.NewHTTPClient(cfg.RequestTimeout, cfg.HealthTimeout),
+		Remote: remote,
 	}
 	dispatcher := &dispatch.Dispatcher{
 		Client: client,
@@ -118,8 +125,10 @@ func run(logger *slog.Logger) error {
 	pdesHost := pdes.NewHost(ctx, (pdes.ProcessFactory{Python: cfg.PythonBin, Script: netScript}).New,
 		executor, 60*time.Second)
 	defer pdesHost.Close()
+	pdesPeers := pdes.NewPeerClient(cfg.RequestTimeout)
+	pdesPeers.HTTP.Transport = guard.Transport{Token: poolToken}
 	pdesManager := pdes.NewManager(ctx, netsim, pdesHost, peerList, nodeID, client,
-		pdes.NewPeerClient(cfg.RequestTimeout), cfg.PDEStepTimeout, cfg.PhaseTimeout)
+		pdesPeers, cfg.PDEStepTimeout, cfg.PhaseTimeout)
 	attackOpts := pdes.Options{
 		Kind: "attack", RunPrefix: "attack", EndpointPrefix: "/attack", StartPath: "/attackrun",
 	}
@@ -127,8 +136,10 @@ func run(logger *slog.Logger) error {
 	attackHost := pdes.NewHost(ctx, (pdes.ProcessFactory{Python: cfg.PythonBin, Script: attackScript}).New,
 		executor, 60*time.Second)
 	defer attackHost.Close()
+	attackPeers := pdes.NewPeerClientWithPrefix(cfg.RequestTimeout, attackOpts.EndpointPrefix)
+	attackPeers.HTTP.Transport = guard.Transport{Token: poolToken}
 	attackManager := pdes.NewManagerWithOptions(ctx, attackSim, attackHost, peerList, nodeID, client,
-		pdes.NewPeerClientWithPrefix(cfg.RequestTimeout, attackOpts.EndpointPrefix),
+		attackPeers,
 		cfg.PDEStepTimeout, cfg.PhaseTimeout, attackOpts)
 
 	// POST /task can take up to SimTimeout; GET /peers up to HealthTimeout.
@@ -148,15 +159,26 @@ func run(logger *slog.Logger) error {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(usage.Snapshot())
 	})
-	routes.Handle("GET /stream", api.StreamHandler(streamer, executor, nodeID, logger))
+	streams := executor.Streams()
+	routes.Handle("GET /stream", api.StreamHandler(streamer, streams, nodeID, logger))
 	routes.Handle("/", pdes.NewHandlerWithOptions(attackHost, attackManager,
 		pdes.NewHandler(pdesHost, pdesManager,
-			api.NetworkHandler(netManager, netsim, executor, nodeID, logger,
+			api.NetworkHandler(netManager, netsim, streams, nodeID, logger,
 				api.NewHandler(manager, nodeID, peerList, client, executor, logger))),
 		attackOpts))
+	peerURLs := make([]string, len(peerList))
+	for i, p := range peerList {
+		peerURLs[i] = p.URL
+	}
+	handler := guard.Handler(guard.Options{
+		Token: poolToken,
+		// NODE_ALLOWED_HOSTS adds DNS names this node may be reached by,
+		// beyond the peer list, localhost, IPs and *.ts.net.
+		Hosts: append(guard.HostsFromURLs(peerURLs), guard.SplitList(os.Getenv("NODE_ALLOWED_HOSTS"))...),
+	}, routes)
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           routes,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      writeTimeout,
@@ -173,6 +195,7 @@ func run(logger *slog.Logger) error {
 			"max_concurrent_tasks", cfg.MaxConcurrentTasks,
 			"request_timeout", cfg.RequestTimeout.String(),
 			"max_attempts", cfg.MaxAttempts,
+			"pool_token", poolToken != "",
 		)
 		errCh <- srv.ListenAndServe()
 	}()

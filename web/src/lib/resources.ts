@@ -1,4 +1,4 @@
-import type { ClusterNode } from "../api/types";
+import type { ClusterNode, NodeResources } from "../api/types";
 
 /** CPU samples kept per node: 40 polls at 3 s is about two minutes. */
 export const HISTORY_LENGTH = 40;
@@ -40,6 +40,8 @@ export function formatRate(bytesPerSec: number | null | undefined): string {
 export interface PoolUsage {
   /** Nodes that reported usage. */
   reporting: number;
+  /** Distinct machines among them (nodes without a host id count as one each). */
+  machines: number;
   slotsInUse: number;
   slotsTotal: number;
   coresUsed: number;
@@ -49,39 +51,75 @@ export interface PoolUsage {
 }
 
 /**
- * Pool-wide totals over the nodes that report usage. Host-scope nodes that
- * share one machine would each count the whole machine, so CPU is only summed
- * when it is safe: every reporting node is a container, or there is one node.
+ * Pool-wide totals over the nodes that report usage, counted per machine so
+ * nodes sharing one host are not double counted:
+ *
+ * - containers on one machine: their cores used add up, and capacity is the
+ *   machine's cores (or the sum of their CPU limits, if smaller);
+ * - nodes reporting whole-machine ("host") figures on one machine all see the
+ *   same load, so it is taken once.
+ *
+ * The pool figure is total cores used over total capacity, not an average of
+ * per-node percentages, which would be wrong for machines of different sizes.
  */
 export function poolUsage(nodes: ClusterNode[]): PoolUsage {
   const reports = nodes.flatMap((node) => (node.healthy && node.resources ? [node.resources] : []));
-  const usage: PoolUsage = { reporting: reports.length, slotsInUse: 0, slotsTotal: 0, coresUsed: 0, cores: 0, cpuPercent: null };
+  const usage: PoolUsage = {
+    reporting: reports.length, machines: 0, slotsInUse: 0, slotsTotal: 0, coresUsed: 0, cores: 0, cpuPercent: null,
+  };
+  const machines = new Map<string, NodeResources[]>();
   for (const report of reports) {
     usage.slotsInUse += report.slots.in_use;
     usage.slotsTotal += report.slots.total;
+    const key = report.host_id ? `host:${report.host_id}` : `node:${report.node_id}`;
+    machines.set(key, [...(machines.get(key) ?? []), report]);
   }
-  const cpus = reports.flatMap((report) => (report.cpu ? [report.cpu] : []));
-  const summable = reports.length === 1 || reports.every((report) => report.scope === "container");
-  if (cpus.length > 0 && summable) {
-    for (const cpu of cpus) {
-      usage.coresUsed += cpu.cores_used;
-      usage.cores += cpu.cores;
+  usage.machines = machines.size;
+  let measured = false;
+  for (const group of machines.values()) {
+    const withCpu = group.filter((report) => report.cpu);
+    if (withCpu.length === 0) continue;
+    measured = true;
+    const hostCores = Math.max(0, ...group.map((report) => report.host_cores ?? 0));
+    const wholeMachine = withCpu.filter((report) => report.scope === "host");
+    if (wholeMachine.length > 0) {
+      usage.coresUsed += Math.max(...wholeMachine.map((report) => report.cpu!.cores_used));
+      usage.cores += hostCores || wholeMachine[0].cpu!.cores;
+    } else {
+      const limits = withCpu.reduce((sum, report) => sum + report.cpu!.cores, 0);
+      usage.coresUsed += withCpu.reduce((sum, report) => sum + report.cpu!.cores_used, 0);
+      usage.cores += hostCores > 0 ? Math.min(hostCores, limits) : limits;
     }
-    // Containers without a CPU limit each report every core of the machine,
-    // so the summed capacity can exceed it; the busy share is still the mean.
-    usage.cpuPercent = cpus.reduce((sum, cpu) => sum + cpu.percent, 0) / cpus.length;
   }
+  if (measured && usage.cores > 0) usage.cpuPercent = clampPercent((usage.coresUsed / usage.cores) * 100);
   return usage;
 }
 
-/** Appends this poll's CPU reading per node and drops nodes that left. */
-export function pushHistory(history: Record<string, number[]>, nodes: ClusterNode[]): Record<string, number[]> {
-  const next: Record<string, number[]> = {};
+export interface CpuSeries {
+  /** sampled_at of the last reading taken, so repeated polls add nothing. */
+  last: string | null;
+  values: number[];
+}
+
+/**
+ * Appends each node's newest CPU reading. A reading is only added when the
+ * node took a new sample (sampled_at changed), so extra refreshes do not
+ * squeeze the time axis. Nodes that left are dropped; a gap (node down, no
+ * reading) restarts the line rather than bridging it.
+ */
+export function pushHistory(history: Record<string, CpuSeries>, nodes: ClusterNode[]): Record<string, CpuSeries> {
+  const next: Record<string, CpuSeries> = {};
   for (const node of nodes) {
-    const previous = history[node.id] ?? [];
-    const percent = node.healthy ? node.resources?.cpu?.percent : undefined;
-    // A gap (node down, no reading) restarts the line rather than bridging it.
-    next[node.id] = percent === undefined ? [] : [...previous, clampPercent(percent)].slice(-HISTORY_LENGTH);
+    const previous = history[node.id] ?? { last: null, values: [] };
+    const report = node.healthy ? node.resources : null;
+    const percent = report?.cpu?.percent;
+    if (!report || percent === undefined) {
+      next[node.id] = { last: null, values: [] };
+    } else if (report.sampled_at === previous.last) {
+      next[node.id] = previous;
+    } else {
+      next[node.id] = { last: report.sampled_at, values: [...previous.values, clampPercent(percent)].slice(-HISTORY_LENGTH) };
+    }
   }
   return next;
 }

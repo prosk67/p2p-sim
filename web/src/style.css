@@ -231,12 +231,12 @@ h1 { margin-bottom: var(--length-7); font-family: Georgia, "Times New Roman", se
 .icon-button { width: var(--length-37); height: var(--length-37); display: grid; place-items: center; border: var(--length-1) solid var(--line); border-radius: var(--length-4); color: var(--ink); background: var(--paper); cursor: pointer; }
 .icon-button:hover { border-color: var(--forest); color: var(--forest); }
 .stat-strip { margin: 0; }
-.stat-strip--summary { display: flex; align-items: center; gap: 0; min-height: var(--length-78); margin-bottom: var(--length-34); padding: var(--length-13) var(--length-18); border: var(--length-1) solid var(--line); border-radius: var(--length-5); background: var(--paper); }
+.stat-strip--summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--length-12) 0; min-height: var(--length-78); margin-bottom: var(--length-34); padding: var(--length-13) var(--length-18); border: var(--length-1) solid var(--line); border-radius: var(--length-5); background: var(--paper); }
 .stat-strip--summary .stat-item { min-width: var(--length-150); display: grid; gap: var(--length-5); padding-right: var(--length-25); margin-right: var(--length-24); border-right: var(--length-1) solid var(--line); }
 .stat-strip--summary .stat-item dt { color: var(--muted); font-size: var(--length-10); }
 .stat-strip--summary .stat-item dd { margin: 0; font-size: var(--length-18); font-weight: 650; }
 .stat-strip--summary .stat-item dd small { color: var(--muted); font-size: var(--length-12); font-weight: 500; }
-.stat-strip--summary .time-value { display: flex; align-items: center; gap: var(--length-7); font-size: var(--length-13); }
+.stat-strip--summary .time-value { display: flex; align-items: center; gap: var(--length-7); font-size: var(--length-13); white-space: nowrap; }
 .refresh-state { display: flex; align-items: center; gap: var(--length-7); margin-left: auto; color: var(--muted); font-size: var(--length-10); }
 .refresh-state i { background: #aab5ae; }
 .refresh-state.is-loading i { background: var(--amber); animation: pulse 1s ease-in-out infinite; }

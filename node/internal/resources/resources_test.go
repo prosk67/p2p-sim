@@ -3,6 +3,8 @@ package resources
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,5 +121,109 @@ func TestNothingReadable(t *testing.T) {
 	got := newSampler("n", fakeSlots{0, 1}, t.TempDir(), 2).Snapshot()
 	if got.CPU != nil || got.Memory != nil || got.Net != nil || got.Slots.Total != 1 {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func procStat16(busy, all int) string {
+	lines := "cpu  " + itoa(busy) + " 0 0 " + itoa(all-busy) + " 0 0 0 0 0 0\n"
+	for i := 0; i < 16; i++ {
+		lines += "cpu" + itoa(i) + " 1 0 0 1 0 0 0 0 0 0\n"
+	}
+	return lines
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+func TestHostScopeCountsMachineCPUsAndPhysicalTraffic(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "proc/meminfo", "MemTotal: 1000 kB\nMemAvailable: 500 kB\n")
+	write(t, root, "proc/stat", procStat16(0, 1000))
+	dev := netDevHeader +
+		"    lo: 9 0 0 0 0 0 0 0 9 0 0 0 0 0 0 0\n" +
+		"  eth0: 1000 0 0 0 0 0 0 0 1000 0 0 0 0 0 0 0\n" +
+		"tailscale0: 1000 0 0 0 0 0 0 0 1000 0 0 0 0 0 0 0\n" +
+		"docker0: 1000 0 0 0 0 0 0 0 1000 0 0 0 0 0 0 0\n" +
+		"vethab12: 1000 0 0 0 0 0 0 0 1000 0 0 0 0 0 0 0\n"
+	write(t, root, "proc/net/dev", dev)
+
+	start := time.Now()
+	// The process is pinned to 2 CPUs, but the machine has 16.
+	s := newSampler("n", fakeSlots{0, 2}, root, 2)
+	write(t, root, "proc/stat", procStat16(800, 2000)) // 800 of the next 1000 ticks busy
+	write(t, root, "proc/net/dev", strings.ReplaceAll(dev, ": 1000 ", ": 3000 "))
+	s.sample(start.Add(2 * time.Second))
+	got := s.Snapshot()
+
+	if got.HostCores != 16 || got.CPU == nil || got.CPU.Cores != 16 || got.CPU.Percent != 80 {
+		t.Fatalf("host cores %v cpu %+v", got.HostCores, got.CPU)
+	}
+	// Only eth0 counts: 2000 B over about 2 s.
+	if got.Net == nil || got.Net.RxBytesPerSec < 900 || got.Net.RxBytesPerSec > 1100 {
+		t.Fatalf("net %+v", got.Net)
+	}
+}
+
+func TestContainerPinnedToCPUs(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "proc/stat", procStat16(0, 1000))
+	write(t, root, "sys/fs/cgroup/cpu.stat", "usage_usec 0\n")
+	write(t, root, "sys/fs/cgroup/memory.current", "1\n")
+	got := newSampler("n", fakeSlots{0, 2}, root, 4).read(time.Now())
+	if got.cores != 4 || got.hostCores != 16 {
+		t.Fatalf("cores %v host %v", got.cores, got.hostCores)
+	}
+}
+
+func TestCgroupV1Container(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, ".dockerenv", "")
+	write(t, root, "proc/meminfo", "MemTotal: 2000000 kB\nMemAvailable: 1000000 kB\n")
+	write(t, root, "proc/stat", procStat16(0, 1000))
+	write(t, root, "sys/fs/cgroup/cpu,cpuacct/cpuacct.usage", "1000000000\n") // 1 s in ns
+	write(t, root, "sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us", "150000\n")
+	write(t, root, "sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us", "100000\n")
+	write(t, root, "sys/fs/cgroup/memory/memory.usage_in_bytes", "50000000\n")
+	write(t, root, "sys/fs/cgroup/memory/memory.stat", "cache 1\ntotal_inactive_file 10000000\n")
+	write(t, root, "sys/fs/cgroup/memory/memory.limit_in_bytes", "9223372036854771712\n") // unlimited
+	write(t, root, "sys/fs/cgroup/pids/pids.current", "12\n")
+
+	start := time.Now()
+	s := newSampler("n", fakeSlots{0, 2}, root, 16)
+	write(t, root, "sys/fs/cgroup/cpu,cpuacct/cpuacct.usage", "3000000000\n") // +2 s of CPU
+	s.sample(start.Add(2 * time.Second))
+	got := s.Snapshot()
+
+	if got.Scope != ScopeContainer || got.CPU == nil || got.CPU.Cores != 1.5 || got.CPU.CoresUsed < 0.9 || got.CPU.CoresUsed > 1.1 {
+		t.Fatalf("scope %s cpu %+v", got.Scope, got.CPU)
+	}
+	if got.Memory == nil || got.Memory.UsedBytes != 40000000 || got.Memory.LimitBytes != 2000000*1024 {
+		t.Fatalf("memory %+v", got.Memory)
+	}
+	if got.PIDs == nil || *got.PIDs != 12 {
+		t.Fatalf("pids %v", got.PIDs)
+	}
+}
+
+func TestCgroupV1FilesOnABareHostAreNotAContainer(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "proc/1/cgroup", "4:cpu,cpuacct:/init.scope\n")
+	write(t, root, "proc/stat", procStat16(0, 1000))
+	write(t, root, "sys/fs/cgroup/cpu,cpuacct/cpuacct.usage", "1\n")
+	write(t, root, "sys/fs/cgroup/memory/memory.usage_in_bytes", "1\n")
+	if got := newSampler("n", fakeSlots{0, 2}, root, 16).Snapshot(); got.Scope != ScopeHost {
+		t.Fatalf("scope %s", got.Scope)
+	}
+}
+
+func TestHostIDGroupsNodesOnOneMachine(t *testing.T) {
+	a, b, c := t.TempDir(), t.TempDir(), t.TempDir()
+	write(t, a, "proc/sys/kernel/random/boot_id", "6f1c0e8e-0000-4000-8000-000000000001\n")
+	write(t, b, "proc/sys/kernel/random/boot_id", "6f1c0e8e-0000-4000-8000-000000000001\n")
+	write(t, c, "proc/sys/kernel/random/boot_id", "0d9a1b2c-0000-4000-8000-000000000002\n")
+	ida := newSampler("node-1", fakeSlots{0, 1}, a, 1).Snapshot().HostID
+	idb := newSampler("node-2", fakeSlots{0, 1}, b, 1).Snapshot().HostID
+	idc := newSampler("node-3", fakeSlots{0, 1}, c, 1).Snapshot().HostID
+	if ida == "" || ida != idb || ida == idc || strings.Contains(ida, "6f1c") {
+		t.Fatalf("host ids %q %q %q", ida, idb, idc)
 	}
 }

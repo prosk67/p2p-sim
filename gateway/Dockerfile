@@ -11,7 +11,7 @@ ENV VITE_USE_MOCK=false
 RUN npm run typecheck && npm test && npx vite build
 
 # ---- Stage 2: gateway binary with the bundle embedded ----
-FROM golang:1.27 AS builder
+FROM golang:1.27.4 AS builder
 WORKDIR /src
 COPY gateway/go.mod gateway/go.sum ./
 RUN go mod download

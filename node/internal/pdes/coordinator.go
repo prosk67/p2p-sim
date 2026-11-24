@@ -3,6 +3,8 @@ package pdes
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -177,7 +179,7 @@ type Run struct {
 	// Busy time per station at the last stats sample, keyed "link/endpoint" or "router".
 	liveBusy map[string]float64
 	liveAt   float64
-	done             chan struct{}
+	done     chan struct{}
 }
 
 func (r *Run) Done() <-chan struct{} { return r.done }
@@ -376,8 +378,12 @@ func (m *Manager) healthyPeers(ctx context.Context) ([]peers.Peer, error) {
 	return healthy, nil
 }
 
+// makeRunID names a run. The random suffix keeps the id unguessable, since
+// partition endpoints on other nodes are addressed by it.
 func makeRunID(prefix, nodeID string, now time.Time) string {
-	return fmt.Sprintf("%s-%s-%s", prefix, nodeID, now.UTC().Format("20060102T150405.000000000"))
+	var suffix [6]byte
+	_, _ = rand.Read(suffix[:])
+	return fmt.Sprintf("%s-%s-%s-%s", prefix, nodeID, now.UTC().Format("20060102T150405.000000000"), hex.EncodeToString(suffix[:]))
 }
 
 func (m *Manager) execute(run *Run, participants []peers.Peer) {

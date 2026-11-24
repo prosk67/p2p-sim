@@ -17,8 +17,11 @@ import (
 const (
 	MaxStreamRho        = 1.5
 	MaxStreamDuration   = 3600.0
-	MaxStreamPacketRate = 200.0   // lambda * speed: packet arrivals per wall-clock second
-	maxStreamLine       = 1 << 20 // the final network "done" event carries all metrics
+	MaxStreamPacketRate = 200.0 // lambda * speed: packet arrivals per wall-clock second
+	// MaxStreamWallSeconds caps how long one live stream may run in real
+	// time (duration / speed), so a viewer cannot hold a slot for days.
+	MaxStreamWallSeconds = 3600.0
+	maxStreamLine        = 1 << 20 // the final network "done" event carries all metrics
 )
 
 // StreamParams describes one live replication: Duration simulated time units,
@@ -48,6 +51,8 @@ func (p StreamParams) Validate() error {
 		return fmt.Errorf("speed must be a positive number, got %v", p.Speed)
 	case p.Lambda*p.Speed > MaxStreamPacketRate:
 		return fmt.Errorf("lambda * speed = %.1f packets per second exceeds %v", p.Lambda*p.Speed, MaxStreamPacketRate)
+	case p.Duration/p.Speed > MaxStreamWallSeconds:
+		return fmt.Errorf("duration / speed = %.0f s of real time exceeds %v s; raise the speed", p.Duration/p.Speed, MaxStreamWallSeconds)
 	}
 	return nil
 }

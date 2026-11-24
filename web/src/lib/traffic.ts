@@ -34,6 +34,8 @@ export type TrafficEvent =
 export const MAX_RHO = 1.5;
 export const MAX_DURATION = 3600;
 export const MAX_PACKET_RATE = 200;
+/** Longest a live stream may run in real time (duration / speed), in seconds. */
+export const MAX_STREAM_WALL_SECONDS = 3600;
 
 export function validateTraffic(p: Omit<TrafficParams, "node">): string[] {
   const errors: string[] = [];
@@ -45,6 +47,9 @@ export function validateTraffic(p: Omit<TrafficParams, "node">): string[] {
   if (!positive(p.speed)) errors.push("Speed must be greater than zero.");
   if (positive(p.lambda) && positive(p.speed) && p.lambda * p.speed > MAX_PACKET_RATE) {
     errors.push(`λ × speed must be at most ${MAX_PACKET_RATE} packets per second; lower the speed.`);
+  }
+  if (positive(p.duration) && positive(p.speed) && p.duration / p.speed > MAX_STREAM_WALL_SECONDS) {
+    errors.push(`At this speed the stream would run ${Math.round(p.duration / p.speed)} s, over the ${MAX_STREAM_WALL_SECONDS} s limit; raise the speed.`);
   }
   if (!Number.isSafeInteger(p.seed) || p.seed < 0) errors.push("Seed must be a nonnegative whole number.");
   return errors;

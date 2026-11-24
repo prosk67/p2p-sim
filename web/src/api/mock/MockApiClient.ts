@@ -57,11 +57,14 @@ function batchId(coordinator: string, now: Date): string {
 /** Plausible, gently moving usage so the Cluster page meters have something to show. */
 function mockResources(id: string, index: number, busy: boolean, now: number): NodeResources {
   const wave = (Math.sin(now / 9000 + index * 1.7) + 1) / 2;
-  const cores = 4;
-  const percent = busy ? 55 + wave * 35 : 2 + wave * 6;
+  const cores = 16;
+  const percent = busy ? 10 + wave * 15 : 0.5 + wave;
   return {
     node_id: id,
     scope: "container",
+    // Like the Compose demo: every node is a container on one 16-core machine.
+    host_id: "mockhost",
+    host_cores: 16,
     slots: { in_use: busy ? 2 : 0, total: 2 },
     cpu: { cores_used: (percent / 100) * cores, cores, percent },
     memory: { used_bytes: (busy ? 180 : 42) * 1024 * 1024 + wave * 8e6, limit_bytes: 512 * 1024 * 1024 },

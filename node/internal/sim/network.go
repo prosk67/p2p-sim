@@ -163,6 +163,25 @@ func (n *Network) Stream(ctx context.Context, scenario []byte, seed int64, speed
 	return pipeLines(parent, ctx, limit, n.command(ctx, args...), scenario, onLine)
 }
 
+// CheckStreamLength rejects playback that would run longer than
+// MaxStreamWallSeconds of real time from start to the end of the scenario.
+func CheckStreamLength(scenario []byte, speed, start float64) error {
+	var head struct {
+		Duration float64 `json:"duration"`
+	}
+	if err := json.Unmarshal(scenario, &head); err != nil || !(head.Duration > 0) {
+		return &ScenarioError{Msg: "scenario duration must be positive"}
+	}
+	if !(speed > 0) || math.IsInf(speed, 0) {
+		return &ScenarioError{Msg: "speed must be a positive number"}
+	}
+	if wall := (head.Duration - start) / speed; wall > MaxStreamWallSeconds {
+		return &ScenarioError{Msg: fmt.Sprintf("this playback would take %.0f s of real time, over the %.0f s limit; raise the speed",
+			wall, MaxStreamWallSeconds)}
+	}
+	return nil
+}
+
 // CheckStreamRate rejects playback that would exceed the packet-rate cap.
 func CheckStreamRate(s Summary, speed float64) error {
 	if !(speed > 0) || math.IsInf(speed, 0) {

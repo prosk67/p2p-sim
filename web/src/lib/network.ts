@@ -63,7 +63,7 @@ export interface GridOptions {
 }
 
 // Mirrors netsim.py's limits.
-export const LIMITS = { nodes: 60, links: 120, flows: 40, events: 60, duration: 3600, offered: 150_000, streamRate: 150 };
+export const LIMITS = { nodes: 60, links: 120, flows: 40, events: 60, duration: 3600, offered: 150_000, streamRate: 150, streamWallSeconds: 3600 };
 export const FLOW_COLORS = 8; // categorical slots; later flows fold into gray
 
 export function flowSlot(index: number): string {
@@ -607,6 +607,8 @@ export function dropLabel(reason: string): string {
 export function playbackSpeeds(sc: Scenario): number[] {
   const peak = sc.flows.reduce((sum, f) => sum + peakRate(f), 0);
   const max = peak > 0 ? LIMITS.streamRate / peak : 20;
-  const options = [0.25, 0.5, 1, 2, 5, 10, 20].filter((v) => v <= max + 1e-9);
+  // The node refuses playback longer than an hour of real time.
+  const min = sc.duration / LIMITS.streamWallSeconds;
+  const options = [0.25, 0.5, 1, 2, 5, 10, 20].filter((v) => v <= max + 1e-9 && v >= min - 1e-9);
   return options.length ? options : [Math.floor(max * 100) / 100];
 }

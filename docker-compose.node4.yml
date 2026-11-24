@@ -26,6 +26,8 @@ services:
       PEERS_CONFIG: /app/config/peers.4.yaml
       NODE_CONFIG: /app/config/node.yaml
       NODE_ID: node-4
+      POOL_TOKEN: "${POOL_TOKEN:-}"
+      NODE_ALLOWED_HOSTS: "${NODE_ALLOWED_HOSTS:-}"
 
   # Membership is symmetric: existing nodes must learn about node-4 too.
   node-1:

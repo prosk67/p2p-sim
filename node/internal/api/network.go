@@ -83,6 +83,9 @@ func NetworkHandler(m *netbatch.Manager, netsim NetworkSim, slots SlotAcquirer, 
 		if err == nil && (req.Start < 0 || math.IsNaN(req.Start) || math.IsInf(req.Start, 0)) {
 			err = &sim.ScenarioError{Msg: "start must be within the run"}
 		}
+		if err == nil {
+			err = sim.CheckStreamLength(req.Scenario, req.Speed, req.Start)
+		}
 		var se *sim.ScenarioError
 		if errors.As(err, &se) {
 			writeJSON(w, http.StatusBadRequest, errorBody{Error: se.Msg})

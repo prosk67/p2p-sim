@@ -99,3 +99,28 @@ func TestUnreachableAndBadJSON(t *testing.T) {
 		t.Fatalf("kind %v; want unreachable", e.Kind)
 	}
 }
+
+func TestPoolTokenSentOnEveryCall(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Authorization"))
+		if r.URL.Path == "/stream" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			return
+		}
+		w.Write([]byte(`{"status":"ok","node_id":"n","peers":1}`))
+	}))
+	defer srv.Close()
+	c := New(time.Second).WithPoolToken("s3cret")
+	if _, err := c.Health(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	body, err := c.OpenStream(context.Background(), srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body.Close()
+	if len(seen) != 2 || seen[0] != "Bearer s3cret" || seen[1] != "Bearer s3cret" {
+		t.Fatalf("Authorization headers %q", seen)
+	}
+}

@@ -59,7 +59,7 @@ func run(settings config.Settings, log *slog.Logger) error {
 	}
 	defer db.Close()
 
-	nodes := nodeclient.New(settings.NodeTimeout)
+	nodes := nodeclient.New(settings.NodeTimeout).WithPoolToken(settings.PoolToken)
 	manager := runs.New(runs.Options{
 		Store: db, Nodes: nodes, Peers: peers, Defaults: defaults,
 		PollInterval: settings.PollInterval, LostAfter: settings.LostAfter,
@@ -73,7 +73,8 @@ func run(settings config.Settings, log *slog.Logger) error {
 		Addr: settings.Listen,
 		Handler: server.Handler(server.Options{
 			Peers: peers, Nodes: nodes, Runs: manager, Defaults: defaults,
-			Token: settings.Token, Version: version, Static: webui.FS(), Log: log,
+			Token: settings.Token, AllowedHosts: settings.AllowedHosts,
+			Version: version, Static: webui.FS(), Log: log,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -85,7 +86,7 @@ func run(settings config.Settings, log *slog.Logger) error {
 	defer stop()
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("gateway listening", "addr", settings.Listen, "peers", len(peers.Peers()), "auth", settings.Token != "")
+		log.Info("gateway listening", "addr", settings.Listen, "peers", len(peers.Peers()), "auth", settings.Token != "", "pool_token", settings.PoolToken != "")
 		errc <- srv.ListenAndServe()
 	}()
 
